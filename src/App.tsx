@@ -117,6 +117,8 @@ export default function App() {
   const [debts, setDebts] = useState<Debt[]>([]);
   const [salaries, setSalaries] = useState<EmployeeSalary[]>([]);
   const [inventory, setInventory] = useState<InventoryItem[]>([]);
+  const [userProfile, setUserProfile] = useState<{ name: string; account: string }>({ name: 'Luan Almeida', account: '' });
+  const [isEditingProfile, setIsEditingProfile] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [activeTrip, setActiveTrip] = useState<{
     kmStart: number;
@@ -145,6 +147,7 @@ export default function App() {
     const savedPlatforms = localStorage.getItem('runtracker_platforms');
     const savedDebts = localStorage.getItem('runtracker_debts');
     const savedSalaries = localStorage.getItem('runtracker_salaries');
+    const savedProfile = localStorage.getItem('runtracker_profile');
 
     if (saved) {
       try {
@@ -167,6 +170,13 @@ export default function App() {
         setSalaries(JSON.parse(savedSalaries));
       } catch (e) {
         console.error("Failed to parse salaries", e);
+      }
+    }
+    if (savedProfile) {
+      try {
+        setUserProfile(JSON.parse(savedProfile));
+      } catch (e) {
+        console.error("Failed to parse profile", e);
       }
     }
     if (savedActive) {
@@ -193,7 +203,8 @@ export default function App() {
     localStorage.setItem('runtracker_debts', JSON.stringify(debts));
     localStorage.setItem('runtracker_salaries', JSON.stringify(salaries));
     localStorage.setItem('runtracker_inventory', JSON.stringify(inventory));
-  }, [trips, activeTrip, platforms, debts, salaries, inventory]);
+    localStorage.setItem('runtracker_profile', JSON.stringify(userProfile));
+  }, [trips, activeTrip, platforms, debts, salaries, inventory, userProfile]);
 
   // Derived Stats
   const stats = useMemo(() => {
@@ -488,8 +499,8 @@ export default function App() {
             <span className="text-xs text-gray-500 uppercase tracking-wider font-semibold">Seu Desempenho</span>
             <h1 className="text-2xl font-extrabold text-gray-900 tracking-tight">Kms & Ganhos</h1>
           </div>
-          <div className="w-10 h-10 rounded-full bg-blue-100 border-2 border-blue-500 flex items-center justify-center text-blue-600 font-bold shadow-sm">
-            LA
+          <div className="w-10 h-10 rounded-full bg-blue-100 border-2 border-blue-500 flex items-center justify-center text-blue-600 font-bold shadow-sm uppercase">
+            {userProfile.name.slice(0, 2)}
           </div>
         </header>
 
@@ -1413,21 +1424,27 @@ export default function App() {
                 animate={{ opacity: 1 }}
                 className="space-y-6"
               >
-                {!isManagingPlatforms ? (
+                {!isManagingPlatforms && !isEditingProfile ? (
                   <>
                     <div className="flex flex-col items-center justify-center py-8">
                       <div className="relative">
-                        <div className="w-20 h-20 rounded-full bg-blue-600 flex items-center justify-center text-white text-2xl font-bold shadow-2xl shadow-blue-200 ring-4 ring-white">
-                          LA
+                        <div className="w-20 h-20 rounded-full bg-blue-600 flex items-center justify-center text-white text-2xl font-bold shadow-2xl shadow-blue-200 ring-4 ring-white uppercase">
+                          {userProfile.name.slice(0, 2)}
                         </div>
                         <div className="absolute bottom-0 right-0 w-6 h-6 bg-emerald-500 border-2 border-white rounded-full"></div>
                       </div>
-                      <h2 className="text-lg font-extrabold mt-4 text-gray-900 tracking-tight">Luan Almeida</h2>
+                      <h2 className="text-lg font-extrabold mt-4 text-gray-900 tracking-tight">{userProfile.name}</h2>
                       <p className="text-[10px] text-blue-600 font-bold uppercase tracking-wider bg-blue-50 px-2 py-0.5 rounded mt-2">Motorista Diamond</p>
+                      {userProfile.account && (
+                        <p className="text-[9px] text-gray-400 font-medium mt-1">Conta: {userProfile.account}</p>
+                      )}
                     </div>
 
                     <div className="bg-gray-50 border border-gray-100 rounded-2xl overflow-hidden divide-y divide-gray-100">
-                      <button className="w-full flex items-center justify-between p-4 bg-white/50 hover:bg-white transition-colors group">
+                      <button 
+                        onClick={() => setIsEditingProfile(true)}
+                        className="w-full flex items-center justify-between p-4 bg-white/50 hover:bg-white transition-colors group"
+                      >
                         <div className="flex items-center gap-3">
                           <div className="w-8 h-8 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center">
                             <User size={16} />
@@ -1482,6 +1499,56 @@ export default function App() {
                       </button>
                     </div>
                   </>
+                ) : isEditingProfile ? (
+                  <div className="space-y-4">
+                    <button 
+                      onClick={() => setIsEditingProfile(false)}
+                      className="flex items-center gap-2 text-[10px] font-bold text-blue-600 uppercase tracking-widest mb-2"
+                    >
+                      <ChevronRight size={14} className="rotate-180" />
+                      Voltar
+                    </button>
+                    
+                    <h2 className="text-lg font-extrabold text-gray-900 tracking-tight">Dados da Conta</h2>
+                    <form 
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        const form = e.target as HTMLFormElement;
+                        const name = (form.elements.namedItem('name') as HTMLInputElement).value;
+                        const account = (form.elements.namedItem('account') as HTMLInputElement).value;
+                        setUserProfile({ name, account });
+                        setIsEditingProfile(false);
+                      }}
+                      className="space-y-4"
+                    >
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-bold text-gray-400 uppercase ml-1 tracking-tight">Nome Completo</label>
+                        <input 
+                          name="name"
+                          type="text" 
+                          required
+                          defaultValue={userProfile.name}
+                          className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-bold text-gray-400 uppercase ml-1 tracking-tight">Dados da Conta (Pix/Banco)</label>
+                        <input 
+                          name="account"
+                          type="text" 
+                          placeholder="Ex: Pix 123.456.789-00"
+                          defaultValue={userProfile.account}
+                          className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
+                        />
+                      </div>
+                      <button 
+                        type="submit"
+                        className="w-full bg-blue-600 text-white rounded-xl py-4 text-xs font-bold uppercase tracking-tight shadow-xl shadow-blue-200 hover:bg-blue-700 transition-all active:scale-[0.98]"
+                      >
+                        Salvar Alterações
+                      </button>
+                    </form>
+                  </div>
                 ) : (
                   <div className="space-y-4">
                     <button 
