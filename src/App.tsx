@@ -14,6 +14,7 @@ import {
   DollarSign, 
   Trash2,
   ChevronRight,
+  ChevronUp,
   PlusCircle,
   Calendar,
   Fuel,
@@ -28,7 +29,8 @@ import {
   ShoppingCart,
   PlusSquare,
   MinusSquare,
-  CreditCard
+  CreditCard,
+  HandCoins
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
@@ -86,6 +88,25 @@ interface InventoryItem {
   category?: string;
 }
 
+interface ReceivableInstallment {
+  id: string;
+  dueDate: string;
+  value: number;
+  isPaid: boolean;
+  paidDate?: string;
+}
+
+interface Receivable {
+  id: string;
+  debtorName: string;
+  totalValue: number;
+  installments: number;
+  paidValue: number;
+  isPaid: boolean;
+  date: string;
+  installmentDetails?: ReceivableInstallment[];
+}
+
 // --- Components ---
 
 interface CardProps {
@@ -110,15 +131,18 @@ const StatCard = ({ title, value, icon: Icon, colorClass, shadowClass }: { title
 );
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'dash' | 'form' | 'history' | 'finance' | 'salary' | 'inventory' | 'profile'>('dash');
+  const [activeTab, setActiveTab] = useState<'dash' | 'form' | 'history' | 'finance' | 'salary' | 'inventory' | 'receivables' | 'profile'>('dash');
   const [selectedFinanceMonth, setSelectedFinanceMonth] = useState(new Date().toISOString().slice(0, 7));
   const [financeCategory, setFinanceCategory] = useState<'entrega' | 'empresa'>('entrega');
   const [trips, setTrips] = useState<Trip[]>([]);
   const [debts, setDebts] = useState<Debt[]>([]);
   const [salaries, setSalaries] = useState<EmployeeSalary[]>([]);
   const [inventory, setInventory] = useState<InventoryItem[]>([]);
+  const [receivables, setReceivables] = useState<Receivable[]>([]);
   const [userProfile, setUserProfile] = useState<{ name: string; account: string }>({ name: 'Luan Almeida', account: '' });
   const [isEditingProfile, setIsEditingProfile] = useState(false);
+  const [showScrollTop, setShowScrollTop] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [activeTrip, setActiveTrip] = useState<{
     kmStart: number;
@@ -148,6 +172,8 @@ export default function App() {
     const savedDebts = localStorage.getItem('runtracker_debts');
     const savedSalaries = localStorage.getItem('runtracker_salaries');
     const savedProfile = localStorage.getItem('runtracker_profile');
+    const savedInventory = localStorage.getItem('runtracker_inventory');
+    const savedReceivables = localStorage.getItem('runtracker_receivables');
 
     if (saved) {
       try {
@@ -179,6 +205,20 @@ export default function App() {
         console.error("Failed to parse profile", e);
       }
     }
+    if (savedInventory) {
+      try {
+        setInventory(JSON.parse(savedInventory));
+      } catch (e) {
+        console.error("Failed to parse inventory", e);
+      }
+    }
+    if (savedReceivables) {
+      try {
+        setReceivables(JSON.parse(savedReceivables));
+      } catch (e) {
+        console.error("Failed to parse receivables", e);
+      }
+    }
     if (savedActive) {
       try {
         setActiveTrip(JSON.parse(savedActive));
@@ -203,8 +243,27 @@ export default function App() {
     localStorage.setItem('runtracker_debts', JSON.stringify(debts));
     localStorage.setItem('runtracker_salaries', JSON.stringify(salaries));
     localStorage.setItem('runtracker_inventory', JSON.stringify(inventory));
+    localStorage.setItem('runtracker_receivables', JSON.stringify(receivables));
     localStorage.setItem('runtracker_profile', JSON.stringify(userProfile));
-  }, [trips, activeTrip, platforms, debts, salaries, inventory, userProfile]);
+  }, [trips, activeTrip, platforms, debts, salaries, inventory, receivables, userProfile]);
+
+  useEffect(() => {
+    const handleScroll = () => {
+      setShowScrollTop(window.scrollY > 300);
+    };
+    window.addEventListener('scroll', handleScroll);
+    return () => window.removeEventListener('scroll', handleScroll);
+  }, []);
+
+  const handleRefresh = () => {
+    setIsRefreshing(true);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    
+    // Simulate data update/refresh visual feedback
+    setTimeout(() => {
+      setIsRefreshing(false);
+    }, 1500);
+  };
 
   // Derived Stats
   const stats = useMemo(() => {
@@ -461,6 +520,60 @@ export default function App() {
 
   const deleteInventoryItem = (id: string) => {
     setInventory(inventory.filter(item => item.id !== id));
+  };
+
+  const addReceivable = (debtorName: string, totalValue: number, installments: number, date: string) => {
+    const installmentList: ReceivableInstallment[] = [];
+    const installmentValue = totalValue / installments;
+    
+    for (let i = 0; i < installments; i++) {
+      const dueDate = new Date(date + 'T00:00:00');
+      dueDate.setMonth(dueDate.getMonth() + i);
+      installmentList.push({
+        id: crypto.randomUUID(),
+        dueDate: dueDate.toISOString().split('T')[0],
+        value: installmentValue,
+        isPaid: false
+      });
+    }
+
+    const newReceivable: Receivable = {
+      id: crypto.randomUUID(),
+      debtorName,
+      totalValue,
+      installments,
+      paidValue: 0,
+      isPaid: false,
+      date,
+      installmentDetails: installmentList
+    };
+    setReceivables([...receivables, newReceivable]);
+  };
+
+  const payInstallment = (receivableId: string, installmentId: string) => {
+    setReceivables(receivables.map(r => {
+      if (r.id === receivableId && r.installmentDetails) {
+        const updatedInstallments = r.installmentDetails.map(ins => {
+          if (ins.id === installmentId) {
+            return { ...ins, isPaid: true, paidDate: new Date().toISOString() };
+          }
+          return ins;
+        });
+        
+        const newPaidValue = updatedInstallments.filter(ins => ins.isPaid).reduce((acc, ins) => acc + ins.value, 0);
+        return {
+          ...r,
+          installmentDetails: updatedInstallments,
+          paidValue: newPaidValue,
+          isPaid: newPaidValue >= r.totalValue - 0.01 // Handle floating point math
+        };
+      }
+      return r;
+    }));
+  };
+
+  const deleteReceivable = (id: string) => {
+    setReceivables(receivables.filter(r => r.id !== id));
   };
 
   const addPlatform = () => {
@@ -1417,6 +1530,198 @@ export default function App() {
               </motion.div>
             )}
 
+            {activeTab === 'receivables' && (
+              <motion.div
+                key="receivables"
+                initial={{ opacity: 0, x: 20 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: -20 }}
+                className="space-y-6"
+              >
+                <div className="bg-emerald-600 border border-emerald-500 rounded-[32px] p-6 shadow-2xl relative overflow-hidden text-white">
+                  <div className="absolute -right-4 -top-4 w-24 h-24 bg-white/10 rounded-full blur-2xl"></div>
+                  <p className="text-[10px] uppercase font-bold tracking-[0.2em] opacity-60 mb-1">Total a Receber</p>
+                  <h2 className="text-3xl font-black tracking-tighter mb-4">
+                    {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(
+                      receivables.reduce((acc, r) => acc + (r.totalValue - r.paidValue), 0)
+                    )}
+                  </h2>
+                  <div className="bg-black/10 rounded-xl p-3 border border-white/10">
+                    <span className="text-[9px] font-bold uppercase tracking-tight">
+                      {receivables.filter(r => !r.isPaid).length} Pessoas Devendo
+                    </span>
+                  </div>
+                </div>
+
+                <Card>
+                  <h3 className="text-sm font-bold text-gray-800 mb-3 flex items-center gap-2">
+                    <TrendingUp size={16} className="text-emerald-600" />
+                    Novo Valor a Receber
+                  </h3>
+                  <form 
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      const form = e.target as HTMLFormElement;
+                      const name = (form.elements.namedItem('debtorName') as HTMLInputElement).value;
+                      const value = Number((form.elements.namedItem('totalValue') as HTMLInputElement).value);
+                      const installments = Number((form.elements.namedItem('installments') as HTMLInputElement).value);
+                      const date = (form.elements.namedItem('date') as HTMLInputElement).value;
+                      addReceivable(name, value, installments, date);
+                      form.reset();
+                    }}
+                    className="space-y-3"
+                  >
+                    <input name="debtorName" required placeholder="Nome de quem deve" className="w-full bg-gray-50 border border-gray-100 rounded-xl px-4 py-2 text-xs font-medium focus:ring-2 focus:ring-emerald-500 outline-none" />
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="space-y-1">
+                        <label className="text-[9px] font-bold text-gray-400 uppercase ml-2">Valor Total</label>
+                        <input name="totalValue" type="number" step="0.01" required placeholder="R$ 0,00" className="w-full bg-gray-50 border border-gray-100 rounded-xl px-4 py-2 text-xs font-bold focus:ring-2 focus:ring-emerald-500 outline-none" />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-[9px] font-bold text-gray-400 uppercase ml-2">Parcelas</label>
+                        <input name="installments" type="number" required defaultValue="1" className="w-full bg-gray-50 border border-gray-100 rounded-xl px-4 py-2 text-xs font-bold focus:ring-2 focus:ring-emerald-500 outline-none" />
+                      </div>
+                    </div>
+                    <input name="date" type="date" required defaultValue={new Date().toISOString().split('T')[0]} className="w-full bg-gray-50 border border-gray-100 rounded-xl px-4 py-2 text-xs font-bold focus:ring-2 focus:ring-emerald-500 outline-none" />
+                    <button type="submit" className="w-full bg-emerald-600 text-white rounded-xl py-2 text-[10px] font-bold uppercase tracking-widest shadow-lg shadow-emerald-100 active:scale-95 transition-all">
+                      Cadastrar Recebível
+                    </button>
+                  </form>
+                </Card>
+
+                <div className="space-y-4">
+                  <h3 className="text-sm font-bold text-gray-800 px-1">Lista de Pendentes</h3>
+                  {receivables.filter(r => !r.isPaid).length === 0 ? (
+                    <div className="text-center py-10 bg-gray-50 rounded-2xl border border-dashed border-gray-200 text-xs text-gray-400 font-medium italic">
+                      Ninguém te deve nada no momento!
+                    </div>
+                  ) : (
+                    receivables.filter(r => !r.isPaid).map(r => (
+                      <div key={r.id}>
+                        <Card>
+                          <div className="flex justify-between items-start mb-4">
+                          <div>
+                            <h4 className="text-sm font-bold text-gray-900">{r.debtorName}</h4>
+                            <p className="text-[10px] font-bold text-gray-400 uppercase">
+                              {r.installments > 1 ? `${r.installments}x Parcelas` : 'À Vista'} • {new Date(r.date + 'T00:00:00').toLocaleDateString('pt-BR')}
+                            </p>
+                          </div>
+                          <div className="text-right">
+                            <p className="text-lg font-black text-emerald-600">
+                              {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(r.totalValue - r.paidValue)}
+                            </p>
+                            <p className="text-[8px] font-bold text-gray-400 uppercase tracking-widest">Restante</p>
+                          </div>
+                        </div>
+
+                        <div className="space-y-2">
+                          <div className="h-1.5 w-full bg-gray-100 rounded-full overflow-hidden">
+                            <div 
+                              className="h-full bg-emerald-500 rounded-full transition-all" 
+                              style={{ width: `${(r.paidValue / r.totalValue) * 100}%` }}
+                            />
+                          </div>
+                          <div className="flex justify-between text-[8px] font-bold text-gray-400 uppercase tracking-tighter">
+                            <span>Pago: {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(r.paidValue)}</span>
+                            <span>Total: {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(r.totalValue)}</span>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center justify-between mt-4">
+                          <div className="w-full space-y-3">
+                            {r.installmentDetails && r.installmentDetails.length > 0 && (
+                              <div className="bg-gray-50 rounded-xl p-3 space-y-2">
+                                <p className="text-[8px] font-bold text-gray-400 uppercase tracking-widest border-b border-gray-100 pb-1">Cronograma de Parcelas</p>
+                                <div className="space-y-1.5 max-h-40 overflow-y-auto pr-1">
+                                  {r.installmentDetails.map((ins, idx) => (
+                                    <div key={ins.id} className="flex items-center justify-between py-1 border-b border-gray-100 last:border-0">
+                                      <div>
+                                        <p className="text-[9px] font-bold text-gray-800">Parcela {idx + 1}</p>
+                                        <p className="text-[7px] text-gray-400 uppercase font-medium">{new Date(ins.dueDate + 'T00:00:00').toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })}</p>
+                                      </div>
+                                      <div className="flex items-center gap-2">
+                                        <span className="text-[10px] font-black text-gray-900">
+                                          {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(ins.value)}
+                                        </span>
+                                        {ins.isPaid ? (
+                                          <span className="bg-emerald-100 text-emerald-600 p-1 rounded-full">
+                                            <CheckCircle2 size={10} />
+                                          </span>
+                                        ) : (
+                                          <button 
+                                            onClick={() => payInstallment(r.id, ins.id)}
+                                            className="bg-emerald-600 text-white text-[8px] font-bold px-2 py-1 rounded shadow-sm active:scale-95"
+                                          >
+                                            Pagar
+                                          </button>
+                                        )}
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+
+                            <div className="flex items-center justify-between pt-2">
+                              <div className="flex items-center gap-3">
+                                {(!r.installmentDetails || r.installmentDetails.length === 0) && (
+                                  <button 
+                                    onClick={() => {
+                                      const amount = prompt("Valor a dar baixa:");
+                                      if (amount && !isNaN(Number(amount))) {
+                                        // Still supporting legacy simple pay if no installments
+                                        setReceivables(receivables.map(rec => {
+                                          if (rec.id === r.id) {
+                                            const newPaid = Math.min(rec.totalValue, rec.paidValue + Number(amount));
+                                            return { ...rec, paidValue: newPaid, isPaid: newPaid >= rec.totalValue };
+                                          }
+                                          return rec;
+                                        }));
+                                      }
+                                    }}
+                                    className="bg-emerald-50 text-emerald-600 text-[10px] font-black uppercase px-4 py-2 rounded-xl active:scale-95 transition-all"
+                                  >
+                                    Dar Baixa
+                                  </button>
+                                )}
+                                <button 
+                                  onClick={() => deleteReceivable(r.id)}
+                                  className="p-2 text-gray-300 hover:text-red-500 transition-colors"
+                                >
+                                  <Trash2 size={16} />
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      </Card>
+                    </div>
+                  ))
+                  )}
+
+                  {receivables.filter(r => r.isPaid).length > 0 && (
+                    <div className="mt-8">
+                      <h4 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-3 text-center">Historico de Pagos</h4>
+                      <div className="space-y-2 opacity-50">
+                        {receivables.filter(r => r.isPaid).map(r => (
+                          <div key={r.id} className="bg-gray-50 rounded-xl p-3 flex justify-between items-center border border-gray-200">
+                             <div>
+                               <p className="text-xs font-bold text-gray-900">{r.debtorName}</p>
+                               <p className="text-[8px] font-medium text-gray-400">{new Date(r.date + 'T00:00:00').toLocaleDateString('pt-BR')}</p>
+                             </div>
+                             <div className="text-right">
+                               <p className="text-xs font-black text-emerald-600">{new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(r.totalValue)}</p>
+                               <CheckCircle2 size={12} className="inline ml-1 text-emerald-500" />
+                             </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </motion.div>
+            )}
+
             {activeTab === 'profile' && (
               <motion.div
                 key="profile"
@@ -1481,10 +1786,12 @@ export default function App() {
                             localStorage.removeItem('runtracker_debts');
                             localStorage.removeItem('runtracker_salaries');
                             localStorage.removeItem('runtracker_inventory');
+                            localStorage.removeItem('runtracker_receivables');
                             setTrips([]);
                             setDebts([]);
                             setSalaries([]);
                             setInventory([]);
+                            setReceivables([]);
                           }
                         }}
                         className="w-full flex items-center justify-between p-4 bg-red-50/20 hover:bg-red-50/50 transition-colors group"
@@ -1605,6 +1912,38 @@ export default function App() {
           </AnimatePresence>
         </main>
 
+        {/* Scroll to Top / Refresh Button */}
+        <AnimatePresence>
+          {showScrollTop && (
+            <motion.button
+              initial={{ opacity: 0, y: 20, scale: 0.8 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 20, scale: 0.8 }}
+              onClick={handleRefresh}
+              className="fixed bottom-24 right-6 w-12 h-12 bg-blue-600 text-white rounded-full shadow-2xl flex items-center justify-center z-50 group active:scale-90 transition-all"
+            >
+              <ChevronUp size={24} className={cn(isRefreshing && "animate-bounce")} />
+            </motion.button>
+          )}
+        </AnimatePresence>
+
+        {/* Global Refresh Overlay (Visual Feedback Only) */}
+        <AnimatePresence>
+          {isRefreshing && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 bg-blue-500/10 backdrop-blur-[2px] z-[60] flex items-center justify-center pointer-events-none"
+            >
+              <div className="bg-white px-6 py-3 rounded-full shadow-2xl flex items-center gap-2 border border-blue-100">
+                <div className="w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
+                <span className="text-xs font-black text-blue-600 uppercase tracking-widest">Atualizando Dados...</span>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
         {/* Bottom Nav Bar */}
         <nav className="absolute bottom-0 left-0 right-0 h-20 bg-white border-t border-gray-100 flex items-center justify-around px-4 z-50">
           <NavButton 
@@ -1630,6 +1969,12 @@ export default function App() {
             onClick={() => setActiveTab('finance')} 
             icon={Wallet} 
             label="Ganhos" 
+          />
+          <NavButton 
+            active={activeTab === 'receivables'} 
+            onClick={() => setActiveTab('receivables')} 
+            icon={HandCoins} 
+            label="Me Deve" 
           />
           <NavButton 
             active={activeTab === 'salary'} 
