@@ -2,7 +2,7 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
  */
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { 
   LayoutDashboard, 
   Route, 
@@ -13,8 +13,10 @@ import {
   MapPin, 
   DollarSign, 
   Trash2,
+  Edit2,
   ChevronRight,
   ChevronUp,
+  ChevronDown,
   PlusCircle,
   Calendar,
   Fuel,
@@ -141,9 +143,15 @@ export default function App() {
   const [receivables, setReceivables] = useState<Receivable[]>([]);
   const [userProfile, setUserProfile] = useState<{ name: string; account: string }>({ name: 'Luan Almeida', account: '' });
   const [isEditingProfile, setIsEditingProfile] = useState(false);
-  const [showScrollTop, setShowScrollTop] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [showSaveFeedback, setShowSaveFeedback] = useState(false);
+  const [editingTrip, setEditingTrip] = useState<Trip | null>(null);
+  const [editingDebt, setEditingDebt] = useState<Debt | null>(null);
+  const [editingInventoryItem, setEditingInventoryItem] = useState<InventoryItem | null>(null);
+  const [editingReceivable, setEditingReceivable] = useState<Receivable | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
+  const mainRef = useRef<HTMLElement>(null);
+  const scrollRef = useRef<HTMLInputElement>(null);
   const [activeTrip, setActiveTrip] = useState<{
     kmStart: number;
     platform: string;
@@ -248,21 +256,37 @@ export default function App() {
   }, [trips, activeTrip, platforms, debts, salaries, inventory, receivables, userProfile]);
 
   useEffect(() => {
+    const main = mainRef.current;
+    const scrollInput = scrollRef.current;
+    if (!main) return;
+
     const handleScroll = () => {
-      setShowScrollTop(window.scrollY > 300);
+      if (scrollInput) {
+        const scrollHeight = main.scrollHeight - main.clientHeight;
+        const percentage = scrollHeight > 0 ? (main.scrollTop / scrollHeight) * 100 : 0;
+        scrollInput.value = percentage.toString();
+      }
     };
-    window.addEventListener('scroll', handleScroll);
-    return () => window.removeEventListener('scroll', handleScroll);
+    main.addEventListener('scroll', handleScroll);
+    return () => main.removeEventListener('scroll', handleScroll);
   }, []);
 
   const handleRefresh = () => {
     setIsRefreshing(true);
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    if (mainRef.current) {
+      mainRef.current.scrollTo({ top: 0, behavior: 'smooth' });
+    }
     
     // Simulate data update/refresh visual feedback
     setTimeout(() => {
       setIsRefreshing(false);
     }, 1500);
+  };
+
+  const scrollToBottom = () => {
+    if (mainRef.current) {
+      mainRef.current.scrollTo({ top: mainRef.current.scrollHeight, behavior: 'smooth' });
+    }
   };
 
   // Derived Stats
@@ -315,18 +339,23 @@ export default function App() {
 
     // Monthly Finance Details (for selected category AND month)
     const filteredByMonthDebts = filteredDebtsByCat.filter(d => d.dueDate.startsWith(selectedFinanceMonth));
-    const monthTripsCat = filteredTripsByCat.filter(t => t.date.startsWith(selectedFinanceMonth));
-    const monthNetProfitCat = monthTripsCat.reduce((acc, t) => acc + t.earnings - t.fuelCost, 0);
+    const monthPaidDebtsCat = filteredByMonthDebts.filter(d => d.isPaid).reduce((acc, d) => acc + d.value, 0);
     const monthPendingDebtsCat = filteredByMonthDebts.filter(d => !d.isPaid).reduce((acc, d) => acc + d.value, 0);
     const monthTotalDebtsCat = filteredByMonthDebts.reduce((acc, d) => acc + d.value, 0);
+    
+    const monthTripsCat = filteredTripsByCat.filter(t => t.date.startsWith(selectedFinanceMonth));
+    const monthTotalGrossEarningsCat = monthTripsCat.reduce((acc, t) => acc + t.earnings, 0);
+    const monthFuelCostCat = monthTripsCat.reduce((acc, t) => acc + t.fuelCost, 0);
     
     const monthSalariesPaid = salaries
       .filter(s => s.month === selectedFinanceMonth)
       .reduce((acc, s) => acc + s.paidValue, 0);
 
     const monthBalanceCat = financeCategory === 'entrega' 
-      ? monthNetProfitCat - monthPendingDebtsCat 
-      : monthNetProfitCat - monthSalariesPaid;
+      ? monthTotalGrossEarningsCat - monthFuelCostCat - monthPaidDebtsCat
+      : monthTotalGrossEarningsCat - monthSalariesPaid;
+
+    const monthNetProfitCat = monthTotalGrossEarningsCat - monthFuelCostCat - monthTotalDebtsCat;
 
     // Global stats (used in dash)
     const totalPendingDebts = debts.filter(d => !d.isPaid).reduce((acc, d) => acc + d.value, 0);
@@ -360,6 +389,9 @@ export default function App() {
       financeMonths: fMonths,
       filteredDebtsByMonth: filteredByMonthDebts,
       monthNetProfit: monthNetProfitCat,
+      monthTotalGrossEarnings: monthTotalGrossEarningsCat,
+      monthPaidDebts: monthPaidDebtsCat,
+      monthFuelCost: monthFuelCostCat,
       monthTotalDebts: monthTotalDebtsCat,
       monthPendingDebts: monthPendingDebtsCat,
       monthBalance: monthBalanceCat,
@@ -408,6 +440,16 @@ export default function App() {
 
   const deleteTrip = (id: string) => {
     setTrips(trips.filter(t => t.id !== id));
+  };
+
+  const updateTrip = (updated: Trip) => {
+    setTrips(trips.map(t => t.id === updated.id ? updated : t));
+    setEditingTrip(null);
+  };
+
+  const updateDebt = (updated: Debt) => {
+    setDebts(debts.map(d => d.id === updated.id ? updated : d));
+    setEditingDebt(null);
   };
 
   const addManualGain = (title: string, value: number, date: string, category: 'entrega' | 'empresa') => {
@@ -522,6 +564,16 @@ export default function App() {
     setInventory(inventory.filter(item => item.id !== id));
   };
 
+  const updateInventoryItem = (updated: InventoryItem) => {
+    setInventory(inventory.map(item => item.id === updated.id ? updated : item));
+    setEditingInventoryItem(null);
+  };
+
+  const updateReceivable = (updated: Receivable) => {
+    setReceivables(receivables.map(r => r.id === updated.id ? updated : r));
+    setEditingReceivable(null);
+  };
+
   const addReceivable = (debtorName: string, totalValue: number, installments: number, date: string) => {
     const installmentList: ReceivableInstallment[] = [];
     const installmentValue = totalValue / installments;
@@ -618,7 +670,7 @@ export default function App() {
         </header>
 
         {/* Main Content Areas */}
-        <main className="flex-1 overflow-y-auto px-6 pb-24 scrollbar-hide">
+        <main ref={mainRef} className="flex-1 overflow-y-auto px-6 pb-24 scrollbar-hide">
           <AnimatePresence mode="wait">
             {activeTab === 'dash' && (
               <motion.div
@@ -968,12 +1020,20 @@ export default function App() {
                               </div>
                             </div>
                           </div>
-                          <button 
-                            onClick={() => deleteTrip(trip.id)}
-                            className="p-2 text-gray-200 hover:text-red-500 transition-colors"
-                          >
-                            <Trash2 size={16} />
-                          </button>
+                            <div className="flex gap-1">
+                              <button 
+                                onClick={() => setEditingTrip(trip)}
+                                className="p-2 text-gray-200 hover:text-blue-500 transition-colors"
+                              >
+                                <Edit2 size={16} />
+                              </button>
+                              <button 
+                                onClick={() => deleteTrip(trip.id)}
+                                className="p-2 text-gray-200 hover:text-red-500 transition-colors"
+                              >
+                                <Trash2 size={16} />
+                              </button>
+                            </div>
                         </Card>
                       </div>
                     ))
@@ -1045,31 +1105,29 @@ export default function App() {
                   </h2>
                   <div className="grid grid-cols-2 gap-4 border-t border-white/10 pt-4">
                     <div>
-                      <p className="text-[9px] uppercase font-bold opacity-40">Ganhos Mensais</p>
-                      <p className="text-sm font-bold text-emerald-400">{new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(stats.monthNetProfit)}</p>
+                      <p className="text-[9px] uppercase font-bold opacity-40">Ganhos (Bruto)</p>
+                      <p className="text-sm font-bold text-emerald-400">{new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(stats.monthTotalGrossEarnings)}</p>
                     </div>
                     <div className="text-right">
-                      {financeCategory === 'entrega' ? (
-                        <>
-                          <p className="text-[9px] uppercase font-bold opacity-40">Dívidas Mês</p>
-                          <p className="text-sm font-bold text-red-400">-{new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(stats.monthPendingDebts)}</p>
-                        </>
-                      ) : (
-                        <>
-                          <p className="text-[9px] uppercase font-bold opacity-40">Salários Pagos</p>
-                          <p className="text-sm font-bold text-red-400">-{new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(stats.monthSalariesPaid)}</p>
-                        </>
-                      )}
+                      <p className="text-[9px] uppercase font-bold opacity-40">Despesas Pagas</p>
+                      <p className="text-sm font-bold text-red-300">-{new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(stats.monthPaidDebts + stats.monthFuelCost)}</p>
                     </div>
                   </div>
                 </div>
 
                 {/* Add Earnings Section (Manual) */}
                 <div>
-                  <h3 className="text-sm font-bold text-gray-800 mb-3 flex items-center gap-2">
-                    <TrendingUp size={16} className="text-emerald-600" />
-                    {financeCategory === 'entrega' ? 'Novo Ganho Extra' : 'Lucro Final da Empresa'}
-                  </h3>
+                  <div className="flex justify-between items-end mb-3">
+                    <h3 className="text-sm font-bold text-gray-800 flex items-center gap-2">
+                      <TrendingUp size={16} className="text-emerald-600" />
+                      {financeCategory === 'entrega' ? 'Ganho Extra' : 'Lucro Empresa'}
+                    </h3>
+                    <div className="text-right">
+                      <p className="text-[8px] uppercase font-bold text-gray-400 tracking-widest">Total Ganhos</p>
+                      <p className="text-xs font-black text-emerald-600">{new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(stats.monthTotalGrossEarnings)}</p>
+                    </div>
+                  </div>
+                  
                   <form 
                     onSubmit={(e) => {
                       e.preventDefault();
@@ -1080,8 +1138,10 @@ export default function App() {
                       const date = (form.elements.namedItem('date') as HTMLInputElement).value;
                       addManualGain(title, value, date, financeCategory);
                       form.reset();
+                      setShowSaveFeedback(true);
+                      setTimeout(() => setShowSaveFeedback(false), 3000);
                     }}
-                    className="grid grid-cols-1 gap-3 bg-white p-4 rounded-2xl border border-gray-100 shadow-sm"
+                    className="grid grid-cols-1 gap-3 bg-white p-4 rounded-2xl border border-gray-100 shadow-sm mb-4"
                   >
                     {financeCategory === 'entrega' ? (
                       <input name="title" required placeholder="Ex: Corrida Particular / Bonus" className="w-full bg-gray-50 border border-gray-100 rounded-xl px-4 py-2 text-xs font-medium focus:ring-2 focus:ring-blue-500 outline-none" />
@@ -1092,13 +1152,42 @@ export default function App() {
                       </div>
                     )}
                     <div className="grid grid-cols-2 gap-3">
-                      <input name="value" type="number" step="0.01" required placeholder="Valor Lucro R$" className="w-full bg-gray-50 border border-gray-100 rounded-xl px-4 py-2 text-xs font-bold focus:ring-2 focus:ring-blue-500 outline-none" />
+                      <input name="value" type="number" step="0.01" required placeholder="Valor R$" className="w-full bg-gray-50 border border-gray-100 rounded-xl px-4 py-2 text-xs font-bold focus:ring-2 focus:ring-blue-500 outline-none" />
                       <input name="date" type="date" required className="w-full bg-gray-50 border border-gray-100 rounded-xl px-4 py-2 text-xs font-medium focus:ring-2 focus:ring-blue-500 outline-none" defaultValue={new Date().toISOString().split('T')[0]} />
                     </div>
                     <button type="submit" className="w-full bg-emerald-600 text-white rounded-xl py-2 text-[10px] font-bold uppercase tracking-widest shadow-lg shadow-emerald-100 active:scale-95 transition-all">
-                      Salvar Lucro
+                      {showSaveFeedback ? '✓ Salvo com Sucesso!' : 'Salvar Ganho'}
                     </button>
                   </form>
+
+                  {/* List of gains for the current month/category */}
+                  <div className="space-y-2 max-h-48 overflow-y-auto scrollbar-hide pr-1">
+                    {trips
+                      .filter(t => t.category === financeCategory && t.date.startsWith(selectedFinanceMonth))
+                      .sort((a, b) => b.date.localeCompare(a.date))
+                      .map(t => (
+                        <div key={t.id} className="bg-white border border-gray-50 p-3 rounded-xl flex justify-between items-center shadow-sm">
+                          <div>
+                            <p className="text-[10px] font-bold text-gray-800">{t.platform}</p>
+                            <p className="text-[8px] text-gray-400 font-bold uppercase">{t.date.split('-').reverse().join('/')}</p>
+                          </div>
+                          <div className="flex items-center gap-1">
+                            <p className="text-xs font-black text-emerald-600">
+                              {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(t.earnings)}
+                            </p>
+                            <button onClick={() => setEditingTrip(t)} className="text-gray-200 hover:text-blue-500 transition-colors p-1">
+                              <Edit2 size={12} />
+                            </button>
+                            <button onClick={() => deleteTrip(t.id)} className="text-gray-200 hover:text-red-500 transition-colors p-1">
+                              <Trash2 size={12} />
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    {trips.filter(t => t.category === financeCategory && t.date.startsWith(selectedFinanceMonth)).length === 0 && (
+                      <p className="text-[10px] text-gray-400 font-medium italic text-center py-4 bg-gray-50 rounded-xl border border-dashed border-gray-100">Nenhum ganho registrado neste mês.</p>
+                    )}
+                  </div>
                 </div>
 
                 {/* Add Debt Section */}
@@ -1161,12 +1250,13 @@ export default function App() {
                             </span>
                           </div>
                           <div className="flex justify-between items-center text-[9px] font-bold uppercase tracking-tight text-gray-400">
-                            <span>Vencimento: {debt.dueDate.split('-').reverse().join('/')}</span>
-                            <div className="flex gap-4">
-                              <button onClick={() => toggleDebtPaid(debt.id)} className={cn("underline decoration-2", debt.isPaid ? "text-blue-600 decoration-blue-100" : "text-emerald-600 decoration-emerald-100")}>
+                            <p className="text-[9px] uppercase font-bold text-gray-400 tracking-tight">Vencimento: {debt.dueDate.split('-').reverse().join('/')}</p>
+                            <div className="flex gap-3">
+                              <button onClick={() => setEditingDebt(debt)} className="text-blue-400 hover:text-blue-600 font-bold text-[9px] uppercase">Editar</button>
+                              <button onClick={() => toggleDebtPaid(debt.id)} className={cn("underline decoration-2 font-bold", debt.isPaid ? "text-blue-600 decoration-blue-100" : "text-emerald-600 decoration-emerald-100")}>
                                 {debt.isPaid ? 'Reabrir' : 'Pagar'}
                               </button>
-                              <button onClick={() => deleteDebt(debt.id)} className="text-red-300 hover:text-red-500">Excluir</button>
+                              <button onClick={() => deleteDebt(debt.id)} className="text-red-300 hover:text-red-500 font-bold">Excluir</button>
                             </div>
                           </div>
                         </div>
@@ -1444,6 +1534,9 @@ export default function App() {
                                         Repor Agora
                                       </span>
                                     )}
+                                    <button onClick={() => setEditingInventoryItem(item)} className="text-gray-200 hover:text-blue-500 transition-colors">
+                                      <Edit2 size={16} />
+                                    </button>
                                     <button onClick={() => deleteInventoryItem(item.id)} className="text-gray-200 hover:text-red-500 transition-colors">
                                       <Trash2 size={16} />
                                     </button>
@@ -1685,6 +1778,12 @@ export default function App() {
                                   </button>
                                 )}
                                 <button 
+                                  onClick={() => setEditingReceivable(r)}
+                                  className="p-2 text-gray-300 hover:text-blue-500 transition-colors"
+                                >
+                                  <Edit2 size={16} />
+                                </button>
+                                <button 
                                   onClick={() => deleteReceivable(r.id)}
                                   className="p-2 text-gray-300 hover:text-red-500 transition-colors"
                                 >
@@ -1912,20 +2011,308 @@ export default function App() {
           </AnimatePresence>
         </main>
 
-        {/* Scroll to Top / Refresh Button */}
+        {/* Edit Trip Modal */}
         <AnimatePresence>
-          {showScrollTop && (
-            <motion.button
-              initial={{ opacity: 0, y: 20, scale: 0.8 }}
-              animate={{ opacity: 1, y: 0, scale: 1 }}
-              exit={{ opacity: 0, y: 20, scale: 0.8 }}
-              onClick={handleRefresh}
-              className="fixed bottom-24 right-6 w-12 h-12 bg-blue-600 text-white rounded-full shadow-2xl flex items-center justify-center z-50 group active:scale-90 transition-all"
+          {editingTrip && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="absolute inset-0 bg-black/60 backdrop-blur-sm z-[100] flex items-end sm:items-center justify-center p-4"
             >
-              <ChevronUp size={24} className={cn(isRefreshing && "animate-bounce")} />
-            </motion.button>
+              <motion.div
+                initial={{ y: 100, opacity: 0 }}
+                animate={{ y: 0, opacity: 1 }}
+                exit={{ y: 100, opacity: 0 }}
+                className="bg-white w-full max-w-md rounded-t-3xl sm:rounded-3xl p-6 shadow-2xl"
+              >
+                <div className="flex justify-between items-center mb-6">
+                  <h3 className="text-lg font-bold text-gray-800">Editar Registro</h3>
+                  <button onClick={() => setEditingTrip(null)} className="text-gray-400 hover:text-gray-600">
+                    <Trash2 size={20} className="rotate-45" /> {/* Using Trash rotated as an X */}
+                  </button>
+                </div>
+
+                <form 
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    const form = e.currentTarget;
+                    const updated: Trip = {
+                      ...editingTrip,
+                      platform: (form.elements.namedItem('platform') as HTMLInputElement).value,
+                      earnings: Number((form.elements.namedItem('earnings') as HTMLInputElement).value),
+                      kmStart: Number((form.elements.namedItem('kmStart') as HTMLInputElement).value),
+                      kmEnd: Number((form.elements.namedItem('kmEnd') as HTMLInputElement).value),
+                      fuelCost: Number((form.elements.namedItem('fuelCost') as HTMLInputElement).value),
+                      date: (form.elements.namedItem('date') as HTMLInputElement).value,
+                    };
+                    updateTrip(updated);
+                  }}
+                  className="space-y-4"
+                >
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest px-1">Plataforma / Título</label>
+                    <input name="platform" defaultValue={editingTrip.platform} required className="w-full bg-gray-50 border border-gray-100 rounded-xl px-4 py-3 text-sm font-bold focus:ring-2 focus:ring-blue-500 outline-none" />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest px-1">Ganhos R$</label>
+                      <input name="earnings" type="number" step="0.01" defaultValue={editingTrip.earnings} required className="w-full bg-gray-50 border border-gray-100 rounded-xl px-4 py-3 text-sm font-bold text-emerald-600 focus:ring-2 focus:ring-blue-500 outline-none" />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest px-1">Custo Comb.</label>
+                      <input name="fuelCost" type="number" step="0.01" defaultValue={editingTrip.fuelCost} required className="w-full bg-gray-50 border border-gray-100 rounded-xl px-4 py-3 text-sm font-bold text-red-500 focus:ring-2 focus:ring-blue-500 outline-none" />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest px-1">KM Inicial</label>
+                      <input name="kmStart" type="number" step="0.1" defaultValue={editingTrip.kmStart} required className="w-full bg-gray-50 border border-gray-100 rounded-xl px-4 py-3 text-sm font-bold focus:ring-2 focus:ring-blue-500 outline-none" />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest px-1">KM Final</label>
+                      <input name="kmEnd" type="number" step="0.1" defaultValue={editingTrip.kmEnd} required className="w-full bg-gray-50 border border-gray-100 rounded-xl px-4 py-3 text-sm font-bold focus:ring-2 focus:ring-blue-500 outline-none" />
+                    </div>
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest px-1">Data</label>
+                    <input name="date" type="date" defaultValue={editingTrip.date} required className="w-full bg-gray-50 border border-gray-100 rounded-xl px-4 py-3 text-sm font-bold focus:ring-2 focus:ring-blue-500 outline-none" />
+                  </div>
+
+                  <div className="flex gap-3 pt-4">
+                    <button type="button" onClick={() => setEditingTrip(null)} className="flex-1 bg-gray-100 text-gray-500 rounded-xl py-3 text-sm font-bold hover:bg-gray-200 transition-all">
+                      Cancelar
+                    </button>
+                    <button type="submit" className="flex-2 bg-blue-600 text-white rounded-xl py-3 text-sm font-bold shadow-lg shadow-blue-100 hover:bg-blue-700 active:scale-95 transition-all">
+                      Salvar Alterações
+                    </button>
+                  </div>
+                </form>
+              </motion.div>
+            </motion.div>
+          )}
+          {editingDebt && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="absolute inset-0 bg-black/60 backdrop-blur-sm z-[100] flex items-end sm:items-center justify-center p-4"
+            >
+              <motion.div
+                initial={{ y: 100, opacity: 0 }}
+                animate={{ y: 0, opacity: 1 }}
+                exit={{ y: 100, opacity: 0 }}
+                className="bg-white w-full max-w-md rounded-t-3xl sm:rounded-3xl p-6 shadow-2xl"
+              >
+                <div className="flex justify-between items-center mb-6">
+                  <h3 className="text-lg font-bold text-gray-800">Editar Conta / Dívida</h3>
+                  <button onClick={() => setEditingDebt(null)} className="text-gray-400 hover:text-gray-600">
+                    <Trash2 size={20} className="rotate-45" />
+                  </button>
+                </div>
+
+                <form 
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    const form = e.currentTarget;
+                    const updated: Debt = {
+                      ...editingDebt,
+                      title: (form.elements.namedItem('title') as HTMLInputElement).value,
+                      value: Number((form.elements.namedItem('value') as HTMLInputElement).value),
+                      dueDate: (form.elements.namedItem('dueDate') as HTMLInputElement).value,
+                    };
+                    updateDebt(updated);
+                  }}
+                  className="space-y-4"
+                >
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest px-1">Título da Conta</label>
+                    <input name="title" defaultValue={editingDebt.title} required className="w-full bg-gray-50 border border-gray-100 rounded-xl px-4 py-3 text-sm font-bold focus:ring-2 focus:ring-blue-500 outline-none" />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest px-1">Valor R$</label>
+                      <input name="value" type="number" step="0.01" defaultValue={editingDebt.value} required className="w-full bg-gray-50 border border-gray-100 rounded-xl px-4 py-3 text-sm font-bold text-red-500 focus:ring-2 focus:ring-blue-500 outline-none" />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest px-1">Vencimento</label>
+                      <input name="dueDate" type="date" defaultValue={editingDebt.dueDate} required className="w-full bg-gray-50 border border-gray-100 rounded-xl px-4 py-3 text-sm font-bold focus:ring-2 focus:ring-blue-500 outline-none" />
+                    </div>
+                  </div>
+
+                  <div className="flex gap-3 pt-4">
+                    <button type="button" onClick={() => setEditingDebt(null)} className="flex-1 bg-gray-100 text-gray-500 rounded-xl py-3 text-sm font-bold hover:bg-gray-200 transition-all">
+                      Cancelar
+                    </button>
+                    <button type="submit" className="flex-2 bg-blue-600 text-white rounded-xl py-3 text-sm font-bold shadow-lg shadow-blue-100 hover:bg-blue-700 active:scale-95 transition-all">
+                      Salvar Alterações
+                    </button>
+                  </div>
+                </form>
+              </motion.div>
+            </motion.div>
+          )}
+
+          {editingInventoryItem && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="absolute inset-0 bg-black/60 backdrop-blur-sm z-[100] flex items-end sm:items-center justify-center p-4"
+            >
+              <motion.div
+                initial={{ y: 100, opacity: 0 }}
+                animate={{ y: 0, opacity: 1 }}
+                exit={{ y: 100, opacity: 0 }}
+                className="bg-white w-full max-w-md rounded-t-3xl sm:rounded-3xl p-6 shadow-2xl"
+              >
+                <div className="flex justify-between items-center mb-6">
+                  <h3 className="text-lg font-bold text-gray-800">Editar Produto</h3>
+                  <button onClick={() => setEditingInventoryItem(null)} className="text-gray-400 hover:text-gray-600">
+                    <Trash2 size={20} className="rotate-45" />
+                  </button>
+                </div>
+
+                <form 
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    const form = e.currentTarget;
+                    const updated: InventoryItem = {
+                      ...editingInventoryItem,
+                      name: (form.elements.namedItem('name') as HTMLInputElement).value,
+                      quantity: Number((form.elements.namedItem('quantity') as HTMLInputElement).value),
+                      minQuantity: Number((form.elements.namedItem('minQuantity') as HTMLInputElement).value),
+                    };
+                    updateInventoryItem(updated);
+                  }}
+                  className="space-y-4"
+                >
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest px-1">Nome do Produto</label>
+                    <input name="name" defaultValue={editingInventoryItem.name} required className="w-full bg-gray-50 border border-gray-100 rounded-xl px-4 py-3 text-sm font-bold focus:ring-2 focus:ring-orange-500 outline-none" />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest px-1">Quantidade Atual</label>
+                      <input name="quantity" type="number" defaultValue={editingInventoryItem.quantity} required className="w-full bg-gray-50 border border-gray-100 rounded-xl px-4 py-3 text-sm font-bold focus:ring-2 focus:ring-orange-500 outline-none" />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest px-1">Qtd Mínima</label>
+                      <input name="minQuantity" type="number" defaultValue={editingInventoryItem.minQuantity} required className="w-full bg-gray-50 border border-gray-100 rounded-xl px-4 py-3 text-sm font-bold focus:ring-2 focus:ring-orange-500 outline-none" />
+                    </div>
+                  </div>
+
+                  <div className="flex gap-3 pt-4">
+                    <button type="button" onClick={() => setEditingInventoryItem(null)} className="flex-1 bg-gray-100 text-gray-500 rounded-xl py-3 text-sm font-bold hover:bg-gray-200 transition-all">
+                      Cancelar
+                    </button>
+                    <button type="submit" className="flex-2 bg-orange-600 text-white rounded-xl py-3 text-sm font-bold shadow-lg shadow-orange-100 hover:bg-orange-700 active:scale-95 transition-all">
+                      Salvar Alterações
+                    </button>
+                  </div>
+                </form>
+              </motion.div>
+            </motion.div>
+          )}
+
+          {editingReceivable && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="absolute inset-0 bg-black/60 backdrop-blur-sm z-[100] flex items-end sm:items-center justify-center p-4"
+            >
+              <motion.div
+                initial={{ y: 100, opacity: 0 }}
+                animate={{ y: 0, opacity: 1 }}
+                exit={{ y: 100, opacity: 0 }}
+                className="bg-white w-full max-w-md rounded-t-3xl sm:rounded-3xl p-6 shadow-2xl"
+              >
+                <div className="flex justify-between items-center mb-6">
+                  <h3 className="text-lg font-bold text-gray-800">Editar Recebível</h3>
+                  <button onClick={() => setEditingReceivable(null)} className="text-gray-400 hover:text-gray-600">
+                    <Trash2 size={20} className="rotate-45" />
+                  </button>
+                </div>
+
+                <form 
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    const form = e.currentTarget;
+                    const updated: Receivable = {
+                      ...editingReceivable,
+                      debtorName: (form.elements.namedItem('debtorName') as HTMLInputElement).value,
+                      totalValue: Number((form.elements.namedItem('totalValue') as HTMLInputElement).value),
+                      date: (form.elements.namedItem('date') as HTMLInputElement).value,
+                    };
+                    updateReceivable(updated);
+                  }}
+                  className="space-y-4"
+                >
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest px-1">Nome do Devedor</label>
+                    <input name="debtorName" defaultValue={editingReceivable.debtorName} required className="w-full bg-gray-50 border border-gray-100 rounded-xl px-4 py-3 text-sm font-bold focus:ring-2 focus:ring-emerald-500 outline-none" />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest px-1">Valor Total R$</label>
+                      <input name="totalValue" type="number" step="0.01" defaultValue={editingReceivable.totalValue} required className="w-full bg-gray-50 border border-gray-100 rounded-xl px-4 py-3 text-sm font-bold text-emerald-600 focus:ring-2 focus:ring-emerald-500 outline-none" />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest px-1">Data Inicial</label>
+                      <input name="date" type="date" defaultValue={editingReceivable.date} required className="w-full bg-gray-50 border border-gray-100 rounded-xl px-4 py-3 text-sm font-bold focus:ring-2 focus:ring-emerald-500 outline-none" />
+                    </div>
+                  </div>
+
+                  <div className="flex gap-3 pt-4">
+                    <button type="button" onClick={() => setEditingReceivable(null)} className="flex-1 bg-gray-100 text-gray-500 rounded-xl py-3 text-sm font-bold hover:bg-gray-200 transition-all">
+                      Cancelar
+                    </button>
+                    <button type="submit" className="flex-2 bg-emerald-600 text-white rounded-xl py-3 text-sm font-bold shadow-lg shadow-emerald-100 hover:bg-emerald-700 active:scale-95 transition-all">
+                      Salvar Alterações
+                    </button>
+                  </div>
+                </form>
+              </motion.div>
+            </motion.div>
           )}
         </AnimatePresence>
+
+        {/* Custom Scroll Controller Bar */}
+        <div className="absolute right-2 top-24 bottom-24 w-6 flex flex-col items-center justify-center z-50 pointer-events-none">
+          <div className="h-full w-1 bg-gray-200/30 rounded-full relative pointer-events-auto">
+            <input 
+              ref={scrollRef}
+              type="range"
+              min="0"
+              max="100"
+              step="0.1"
+              defaultValue="0"
+              onChange={(e) => {
+                if (mainRef.current) {
+                  const percentage = Number(e.target.value);
+                  const scrollHeight = mainRef.current.scrollHeight - mainRef.current.clientHeight;
+                  mainRef.current.scrollTop = (percentage / 100) * scrollHeight;
+                }
+              }}
+              style={{
+                writingMode: 'vertical-lr' as any,
+                appearance: 'none',
+                width: '6px',
+                height: '100%',
+                background: 'transparent',
+                cursor: 'pointer'
+              }}
+              className="absolute -left-[2px] inset-0 z-10 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-6 [&::-webkit-slider-thumb]:h-10 [&::-webkit-slider-thumb]:bg-blue-600 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:shadow-lg [&::-webkit-slider-thumb]:border-2 [&::-webkit-slider-thumb]:border-white [&::-webkit-slider-thumb]:active:scale-110 transition-transform"
+            />
+          </div>
+        </div>
 
         {/* Global Refresh Overlay (Visual Feedback Only) */}
         <AnimatePresence>
@@ -1934,7 +2321,7 @@ export default function App() {
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              className="fixed inset-0 bg-blue-500/10 backdrop-blur-[2px] z-[60] flex items-center justify-center pointer-events-none"
+              className="absolute inset-0 bg-blue-500/10 backdrop-blur-[2px] z-[60] flex items-center justify-center pointer-events-none"
             >
               <div className="bg-white px-6 py-3 rounded-full shadow-2xl flex items-center gap-2 border border-blue-100">
                 <div className="w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
