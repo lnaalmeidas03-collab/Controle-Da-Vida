@@ -13,6 +13,7 @@ import {
   MapPin, 
   DollarSign, 
   Trash2,
+  Users,
   Edit2,
   ChevronRight,
   ChevronUp,
@@ -27,7 +28,6 @@ import {
   CheckCircle2,
   Briefcase,
   Bike,
-  Users,
   ShoppingCart,
   PlusSquare,
   MinusSquare,
@@ -98,6 +98,11 @@ interface ReceivableInstallment {
   paidDate?: string;
 }
 
+interface ReceivablePayment {
+  date: string;
+  value: number;
+}
+
 interface Receivable {
   id: string;
   debtorName: string;
@@ -106,7 +111,9 @@ interface Receivable {
   paidValue: number;
   isPaid: boolean;
   date: string;
+  observation?: string;
   installmentDetails?: ReceivableInstallment[];
+  payments?: ReceivablePayment[];
 }
 
 // --- Components ---
@@ -141,8 +148,11 @@ export default function App() {
   const [salaries, setSalaries] = useState<EmployeeSalary[]>([]);
   const [inventory, setInventory] = useState<InventoryItem[]>([]);
   const [receivables, setReceivables] = useState<Receivable[]>([]);
-  const [userProfile, setUserProfile] = useState<{ name: string; account: string }>({ name: 'Luan Almeida', account: '' });
+  const [savedDebtors, setSavedDebtors] = useState<string[]>([]);
+  const [userProfile, setUserProfile] = useState<{ name: string; account: string; deliveryGoal: number; companyGoal: number }>({ name: 'Luan Almeida', account: '', deliveryGoal: 0, companyGoal: 0 });
   const [isEditingProfile, setIsEditingProfile] = useState(false);
+  const [isManagingPlatforms, setIsManagingPlatforms] = useState(false);
+  const [isManagingGoals, setIsManagingGoals] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [showSaveFeedback, setShowSaveFeedback] = useState(false);
   const [editingTrip, setEditingTrip] = useState<Trip | null>(null);
@@ -157,9 +167,7 @@ export default function App() {
     platform: string;
     date: string;
   } | null>(null);
-  
   const [platforms, setPlatforms] = useState<string[]>(['Uber', '99', 'InDrive', 'Particular', 'Entrega']);
-  const [isManagingPlatforms, setIsManagingPlatforms] = useState(false);
   const [newPlatform, setNewPlatform] = useState('');
 
   // New Trip Form State
@@ -182,6 +190,7 @@ export default function App() {
     const savedProfile = localStorage.getItem('runtracker_profile');
     const savedInventory = localStorage.getItem('runtracker_inventory');
     const savedReceivables = localStorage.getItem('runtracker_receivables');
+    const savedDebtorsLocal = localStorage.getItem('runtracker_debtors');
 
     if (saved) {
       try {
@@ -208,7 +217,12 @@ export default function App() {
     }
     if (savedProfile) {
       try {
-        setUserProfile(JSON.parse(savedProfile));
+        const parsed = JSON.parse(savedProfile);
+        setUserProfile({
+          ...parsed,
+          deliveryGoal: parsed.deliveryGoal || 0,
+          companyGoal: parsed.companyGoal || 0
+        });
       } catch (e) {
         console.error("Failed to parse profile", e);
       }
@@ -227,6 +241,13 @@ export default function App() {
         console.error("Failed to parse receivables", e);
       }
     }
+    if (savedDebtorsLocal) {
+      try {
+        setSavedDebtors(JSON.parse(savedDebtorsLocal));
+      } catch (e) {
+        console.error("Failed to parse saved debtors", e);
+      }
+    }
     if (savedActive) {
       try {
         setActiveTrip(JSON.parse(savedActive));
@@ -236,7 +257,11 @@ export default function App() {
     }
     if (savedPlatforms) {
       try {
-        setPlatforms(JSON.parse(savedPlatforms));
+        const parsed = JSON.parse(savedPlatforms);
+        setPlatforms(parsed);
+        if (parsed.length > 0) {
+          setFormData(prev => ({ ...prev, platform: parsed[0] }));
+        }
       } catch (e) {
         console.error("Failed to parse platforms", e);
       }
@@ -252,6 +277,7 @@ export default function App() {
     localStorage.setItem('runtracker_salaries', JSON.stringify(salaries));
     localStorage.setItem('runtracker_inventory', JSON.stringify(inventory));
     localStorage.setItem('runtracker_receivables', JSON.stringify(receivables));
+    localStorage.setItem('runtracker_debtors', JSON.stringify(savedDebtors));
     localStorage.setItem('runtracker_profile', JSON.stringify(userProfile));
   }, [trips, activeTrip, platforms, debts, salaries, inventory, receivables, userProfile]);
 
@@ -292,12 +318,36 @@ export default function App() {
   // Derived Stats
   const stats = useMemo(() => {
     const today = new Date().toISOString().split('T')[0];
-    const todayTrips = trips.filter(t => t.date === today);
     
-    const todayEarnings = todayTrips.reduce((acc, t) => acc + t.earnings, 0);
+    // Helper to get receivable payments by date
+    const receivablePayments = (() => {
+      const pArr: { date: string, value: number }[] = [];
+      receivables.forEach(r => {
+        if (r.installmentDetails) {
+          r.installmentDetails.forEach(i => {
+            if (i.isPaid && i.paidDate) {
+              pArr.push({ date: i.paidDate.split('T')[0], value: i.value });
+            }
+          });
+        }
+        if (r.payments) {
+          r.payments.forEach(p => {
+             pArr.push({ date: p.date.split('T')[0], value: p.value });
+          });
+        }
+      });
+      return pArr;
+    })();
+
+    const todayTrips = trips.filter(t => t.date === today);
+    const todayReceivableEarnings = receivablePayments.filter(p => p.date === today).reduce((acc, p) => acc + p.value, 0);
+    const todayEarnings = todayTrips.reduce((acc, t) => acc + t.earnings, 0) + todayReceivableEarnings;
     const todayKM = todayTrips.reduce((acc, t) => acc + (t.kmEnd - t.kmStart), 0);
 
-    const totalEarnings = trips.reduce((acc, t) => acc + t.earnings, 0);
+    const totalEarningsTrips = trips.reduce((acc, t) => acc + t.earnings, 0);
+    const totalEarningsReceivables = receivablePayments.reduce((acc, p) => acc + p.value, 0);
+    const totalEarnings = totalEarningsTrips + totalEarningsReceivables;
+
     const deliveryTrips = trips.filter(t => t.category === 'entrega');
     const totalKM = deliveryTrips.reduce((acc, t) => acc + (t.kmEnd - t.kmStart), 0);
     const totalFuel = trips.reduce((acc, t) => acc + t.fuelCost, 0);
@@ -311,7 +361,13 @@ export default function App() {
     // Monthly Stats
     const currentMonth = new Date().toISOString().slice(0, 7); // YYYY-MM
     const monthTripsTotal = trips.filter(t => t.date.startsWith(currentMonth));
-    const monthEarningsTotal = monthTripsTotal.reduce((acc, t) => acc + t.earnings, 0);
+    const currentMonthReceivablePayments = receivablePayments.filter(p => p.date.startsWith(currentMonth));
+    const monthReceivableEarningsTotal = currentMonthReceivablePayments.reduce((acc, p) => acc + p.value, 0);
+    const monthEarningsTotal = monthTripsTotal.reduce((acc, t) => acc + t.earnings, 0) + monthReceivableEarningsTotal;
+    
+    const deliveryMonthEarnings = monthTripsTotal.filter(t => t.category === 'entrega').reduce((acc, t) => acc + t.earnings, 0) + monthReceivableEarningsTotal;
+    const companyMonthEarnings = monthTripsTotal.filter(t => t.category === 'empresa').reduce((acc, t) => acc + t.earnings, 0);
+
     const monthKMTotal = monthTripsTotal.reduce((acc, t) => acc + (t.kmEnd - t.kmStart), 0);
 
     // Grouping by Month for History
@@ -326,6 +382,15 @@ export default function App() {
       return acc;
     }, {});
 
+    // Add receivable earnings to monthly summary
+    receivablePayments.forEach(p => {
+      const month = p.date.slice(0, 7);
+      if (!monthlySummary[month]) {
+        monthlySummary[month] = { month, earnings: 0, km: 0, count: 0 };
+      }
+      monthlySummary[month].earnings += p.value;
+    });
+
     const monthlySummaryList = Object.values(monthlySummary).sort((a: any, b: any) => b.month.localeCompare(a.month));
 
     // Finance Months List
@@ -334,6 +399,7 @@ export default function App() {
        months.add(new Date().toISOString().slice(0, 7));
        trips.forEach(t => months.add(t.date.slice(0, 7)));
        debts.forEach(d => months.add(d.dueDate.slice(0, 7)));
+       receivablePayments.forEach(p => months.add(p.date.slice(0, 7)));
        return Array.from(months).sort();
     })();
 
@@ -344,7 +410,10 @@ export default function App() {
     const monthTotalDebtsCat = filteredByMonthDebts.reduce((acc, d) => acc + d.value, 0);
     
     const monthTripsCat = filteredTripsByCat.filter(t => t.date.startsWith(selectedFinanceMonth));
-    const monthTotalGrossEarningsCat = monthTripsCat.reduce((acc, t) => acc + t.earnings, 0);
+    const monthReceivableEarningsCat = financeCategory === 'entrega' 
+      ? receivablePayments.filter(p => p.date.startsWith(selectedFinanceMonth)).reduce((acc, p) => acc + p.value, 0)
+      : 0;
+    const monthTotalGrossEarningsCat = monthTripsCat.reduce((acc, t) => acc + t.earnings, 0) + monthReceivableEarningsCat;
     const monthFuelCostCat = monthTripsCat.reduce((acc, t) => acc + t.fuelCost, 0);
     
     const monthSalariesPaid = salaries
@@ -365,10 +434,11 @@ export default function App() {
       const d = new Date();
       d.setDate(d.getDate() - (5 - i));
       const dateStr = d.toISOString().split('T')[0];
-      const dayEarnings = trips.filter(t => t.date === dateStr).reduce((acc, t) => acc + t.earnings, 0);
+      const dayTripEarnings = trips.filter(t => t.date === dateStr).reduce((acc, t) => acc + t.earnings, 0);
+      const dayReceivableEarnings = receivablePayments.filter(p => p.date === dateStr).reduce((acc, p) => acc + p.value, 0);
       return {
         name: ['DOM', 'SEG', 'TER', 'QUA', 'QUI', 'SEX', 'SAB'][d.getDay()],
-        ganho: dayEarnings,
+        ganho: dayTripEarnings + dayReceivableEarnings,
         date: dateStr
       };
     });
@@ -395,7 +465,9 @@ export default function App() {
       monthTotalDebts: monthTotalDebtsCat,
       monthPendingDebts: monthPendingDebtsCat,
       monthBalance: monthBalanceCat,
-      monthSalariesPaid
+      monthSalariesPaid,
+      deliveryMonthEarnings,
+      companyMonthEarnings
     };
   }, [trips, debts, salaries, financeCategory, selectedFinanceMonth]);
 
@@ -574,7 +646,7 @@ export default function App() {
     setEditingReceivable(null);
   };
 
-  const addReceivable = (debtorName: string, totalValue: number, installments: number, date: string) => {
+  const addReceivable = (debtorName: string, totalValue: number, installments: number, date: string, observation: string = '') => {
     const installmentList: ReceivableInstallment[] = [];
     const installmentValue = totalValue / installments;
     
@@ -597,6 +669,7 @@ export default function App() {
       paidValue: 0,
       isPaid: false,
       date,
+      observation,
       installmentDetails: installmentList
     };
     setReceivables([...receivables, newReceivable]);
@@ -862,7 +935,7 @@ export default function App() {
                             className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-blue-500 appearance-none bg-no-repeat bg-[right_1rem_center]"
                             style={{ backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%239CA3AF' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E")` }}
                           >
-                            {platforms.map(p => <option key={p}>{p}</option>)}
+                            {platforms.map(p => <option key={p} value={p}>{p}</option>)}
                           </select>
                         </div>
                       </div>
@@ -895,7 +968,9 @@ export default function App() {
                       </div>
                       <div>
                         <h2 className="text-sm font-bold text-gray-900">Finalizar Trabalho</h2>
-                        <p className="text-[10px] text-emerald-600 font-bold uppercase tracking-tight">KM Inicial: {activeTrip.kmStart}</p>
+                        <p className="text-[10px] text-emerald-600 font-bold uppercase tracking-tight">
+                          {activeTrip.platform} • KM Inicial: {activeTrip.kmStart}
+                        </p>
                       </div>
                     </div>
 
@@ -1646,6 +1721,48 @@ export default function App() {
                   </div>
                 </div>
 
+                <Card className="bg-emerald-50/50 border-emerald-100">
+                  <div className="flex items-center justify-between mb-3 px-1">
+                    <h3 className="text-[10px] font-black text-emerald-700 uppercase tracking-widest flex items-center gap-2">
+                       <Users size={14} /> Devedores Salvos
+                    </h3>
+                    <div className="flex gap-2">
+                      <input 
+                        id="newDebtorInput"
+                        placeholder="Novo nome..." 
+                        className="bg-white border border-emerald-100 rounded-lg px-3 py-1 text-[10px] font-bold focus:ring-1 focus:ring-emerald-500 outline-none w-24 sm:w-32"
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            const input = e.target as HTMLInputElement;
+                            const name = input.value.trim();
+                            if (name && !savedDebtors.includes(name)) {
+                              setSavedDebtors([...savedDebtors, name]);
+                              input.value = '';
+                            }
+                          }
+                        }}
+                      />
+                    </div>
+                  </div>
+                  {savedDebtors.length === 0 ? (
+                    <p className="text-[9px] text-emerald-400 font-medium italic text-center py-2">Sem devedores cadastrados.</p>
+                  ) : (
+                    <div className="flex flex-wrap gap-2">
+                      {savedDebtors.map(name => (
+                        <div key={name} className="flex items-center gap-1 bg-white border border-emerald-100 px-2 py-1 rounded-full text-[10px] font-bold text-emerald-700 shadow-sm">
+                          {name}
+                          <button 
+                            onClick={() => setSavedDebtors(savedDebtors.filter(d => d !== name))}
+                            className="hover:text-red-500 transition-colors"
+                          >
+                            <Trash2 size={10} />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </Card>
+
                 <Card>
                   <h3 className="text-sm font-bold text-gray-800 mb-3 flex items-center gap-2">
                     <TrendingUp size={16} className="text-emerald-600" />
@@ -1659,12 +1776,24 @@ export default function App() {
                       const value = Number((form.elements.namedItem('totalValue') as HTMLInputElement).value);
                       const installments = Number((form.elements.namedItem('installments') as HTMLInputElement).value);
                       const date = (form.elements.namedItem('date') as HTMLInputElement).value;
-                      addReceivable(name, value, installments, date);
+                      const observation = (form.elements.namedItem('observation') as HTMLInputElement).value;
+                      addReceivable(name, value, installments, date, observation);
                       form.reset();
                     }}
                     className="space-y-3"
                   >
-                    <input name="debtorName" required placeholder="Nome de quem deve" className="w-full bg-gray-50 border border-gray-100 rounded-xl px-4 py-2 text-xs font-medium focus:ring-2 focus:ring-emerald-500 outline-none" />
+                    <div className="relative">
+                      <input 
+                        name="debtorName" 
+                        required 
+                        list="debtors-list"
+                        placeholder="Nome de quem deve" 
+                        className="w-full bg-gray-50 border border-gray-100 rounded-xl px-4 py-2 text-xs font-medium focus:ring-2 focus:ring-emerald-500 outline-none" 
+                      />
+                      <datalist id="debtors-list">
+                        {savedDebtors.map(name => <option key={name} value={name} />)}
+                      </datalist>
+                    </div>
                     <div className="grid grid-cols-2 gap-3">
                       <div className="space-y-1">
                         <label className="text-[9px] font-bold text-gray-400 uppercase ml-2">Valor Total</label>
@@ -1675,22 +1804,50 @@ export default function App() {
                         <input name="installments" type="number" required defaultValue="1" className="w-full bg-gray-50 border border-gray-100 rounded-xl px-4 py-2 text-xs font-bold focus:ring-2 focus:ring-emerald-500 outline-none" />
                       </div>
                     </div>
-                    <input name="date" type="date" required defaultValue={new Date().toISOString().split('T')[0]} className="w-full bg-gray-50 border border-gray-100 rounded-xl px-4 py-2 text-xs font-bold focus:ring-2 focus:ring-emerald-500 outline-none" />
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="space-y-1">
+                        <label className="text-[9px] font-bold text-gray-400 uppercase ml-2">Data Inicial</label>
+                        <input name="date" type="date" required defaultValue={new Date().toISOString().split('T')[0]} className="w-full bg-gray-50 border border-gray-100 rounded-xl px-4 py-2 text-xs font-bold focus:ring-2 focus:ring-emerald-500 outline-none" />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-[9px] font-bold text-gray-400 uppercase ml-2">Observação (Opcional)</label>
+                        <input name="observation" placeholder="Ex: Referente a..." className="w-full bg-gray-50 border border-gray-100 rounded-xl px-4 py-2 text-xs font-medium focus:ring-2 focus:ring-emerald-500 outline-none" />
+                      </div>
+                    </div>
                     <button type="submit" className="w-full bg-emerald-600 text-white rounded-xl py-2 text-[10px] font-bold uppercase tracking-widest shadow-lg shadow-emerald-100 active:scale-95 transition-all">
                       Cadastrar Recebível
                     </button>
                   </form>
                 </Card>
 
-                <div className="space-y-4">
+                <div className="space-y-6">
                   <h3 className="text-sm font-bold text-gray-800 px-1">Lista de Pendentes</h3>
                   {receivables.filter(r => !r.isPaid).length === 0 ? (
                     <div className="text-center py-10 bg-gray-50 rounded-2xl border border-dashed border-gray-200 text-xs text-gray-400 font-medium italic">
                       Ninguém te deve nada no momento!
                     </div>
                   ) : (
-                    receivables.filter(r => !r.isPaid).map(r => (
-                      <div key={r.id}>
+                    Object.entries(
+                      receivables
+                        .filter(r => !r.isPaid)
+                        .reduce((acc: Record<string, Receivable[]>, r) => {
+                          if (!acc[r.debtorName]) acc[r.debtorName] = [];
+                          acc[r.debtorName].push(r);
+                          return acc;
+                        }, {})
+                    ).sort(([nameA], [nameB]) => nameA.localeCompare(nameB)).map(([debtorName, debtorReceivables]: [string, Receivable[]]) => (
+                      <div key={debtorName} className="space-y-3">
+                        <div className="flex items-center justify-between px-1">
+                          <h4 className="text-[10px] font-black text-gray-600 uppercase tracking-widest flex items-center gap-2">
+                            <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full"></span>
+                            {debtorName}
+                          </h4>
+                          <span className="text-[10px] font-bold text-gray-400 bg-gray-100 px-2 py-0.5 rounded-full">
+                            {debtorReceivables.length} {debtorReceivables.length === 1 ? 'pendência' : 'pendências'}
+                          </span>
+                        </div>
+                        {debtorReceivables.map(r => (
+                          <div key={r.id}>
                         <Card>
                           <div className="flex justify-between items-start mb-4">
                           <div>
@@ -1698,6 +1855,11 @@ export default function App() {
                             <p className="text-[10px] font-bold text-gray-400 uppercase">
                               {r.installments > 1 ? `${r.installments}x Parcelas` : 'À Vista'} • {new Date(r.date + 'T00:00:00').toLocaleDateString('pt-BR')}
                             </p>
+                            {r.observation && (
+                              <p className="mt-1 text-[9px] font-medium text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded italic">
+                                {r.observation}
+                              </p>
+                            )}
                           </div>
                           <div className="text-right">
                             <p className="text-lg font-black text-emerald-600">
@@ -1765,8 +1927,15 @@ export default function App() {
                                         // Still supporting legacy simple pay if no installments
                                         setReceivables(receivables.map(rec => {
                                           if (rec.id === r.id) {
-                                            const newPaid = Math.min(rec.totalValue, rec.paidValue + Number(amount));
-                                            return { ...rec, paidValue: newPaid, isPaid: newPaid >= rec.totalValue };
+                                            const val = Number(amount);
+                                            const newPaid = Math.min(rec.totalValue, rec.paidValue + val);
+                                            const newPayment = { date: new Date().toISOString(), value: val };
+                                            return { 
+                                              ...rec, 
+                                              paidValue: newPaid, 
+                                              isPaid: newPaid >= rec.totalValue - 0.01,
+                                              payments: [...(rec.payments || []), newPayment]
+                                            };
                                           }
                                           return rec;
                                         }));
@@ -1794,8 +1963,10 @@ export default function App() {
                           </div>
                         </div>
                       </Card>
-                    </div>
-                  ))
+                          </div>
+                        ))}
+                      </div>
+                    ))
                   )}
 
                   {receivables.filter(r => r.isPaid).length > 0 && (
@@ -1828,7 +1999,7 @@ export default function App() {
                 animate={{ opacity: 1 }}
                 className="space-y-6"
               >
-                {!isManagingPlatforms && !isEditingProfile ? (
+                {!isManagingPlatforms && !isEditingProfile && !isManagingGoals ? (
                   <>
                     <div className="flex flex-col items-center justify-center py-8">
                       <div className="relative">
@@ -1843,6 +2014,66 @@ export default function App() {
                         <p className="text-[9px] text-gray-400 font-medium mt-1">Conta: {userProfile.account}</p>
                       )}
                     </div>
+
+                    {(userProfile.deliveryGoal > 0 || userProfile.companyGoal > 0) && (
+                      <div className="grid grid-cols-1 gap-4 px-1">
+                        {userProfile.deliveryGoal > 0 && (
+                          <div className="bg-white rounded-2xl p-4 border border-orange-100 shadow-sm">
+                            <div className="flex justify-between items-end mb-3">
+                              <div>
+                                <p className="text-[10px] font-bold text-orange-500 uppercase tracking-widest flex items-center gap-1">
+                                  <Bike size={10} /> Progresso Entregas
+                                </p>
+                                <p className="text-sm font-extrabold text-gray-800">
+                                  R$ {stats.deliveryMonthEarnings.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                                </p>
+                              </div>
+                              <p className="text-[10px] font-bold text-gray-400">
+                                Meta: R$ {userProfile.deliveryGoal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                              </p>
+                            </div>
+                            <div className="h-2 bg-orange-50 rounded-full overflow-hidden">
+                              <motion.div 
+                                initial={{ width: 0 }}
+                                animate={{ width: `${Math.min(100, (stats.deliveryMonthEarnings / userProfile.deliveryGoal) * 100)}%` }}
+                                className="h-full bg-orange-500 rounded-full shadow-sm"
+                              />
+                            </div>
+                            <p className="text-right text-[9px] font-bold text-orange-600 mt-2">
+                              {Math.round((stats.deliveryMonthEarnings / userProfile.deliveryGoal) * 100)}% Atingido
+                            </p>
+                          </div>
+                        )}
+
+                        {userProfile.companyGoal > 0 && (
+                          <div className="bg-white rounded-2xl p-4 border border-blue-100 shadow-sm">
+                            <div className="flex justify-between items-end mb-3">
+                              <div>
+                                <p className="text-[10px] font-bold text-blue-500 uppercase tracking-widest flex items-center gap-1">
+                                  <Briefcase size={10} /> Progresso Empresa
+                                </p>
+                                <p className="text-sm font-extrabold text-gray-800">
+                                  R$ {stats.companyMonthEarnings.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                                </p>
+                              </div>
+                              <p className="text-[10px] font-bold text-gray-400">
+                                Meta: R$ {userProfile.companyGoal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                              </p>
+                            </div>
+                            <div className="h-2 bg-blue-50 rounded-full overflow-hidden">
+                              <motion.div 
+                                initial={{ width: 0 }}
+                                animate={{ width: `${Math.min(100, (stats.companyMonthEarnings / userProfile.companyGoal) * 100)}%` }}
+                                className="h-full bg-blue-500 rounded-full shadow-sm"
+                              />
+                            </div>
+                            <p className="text-right text-[9px] font-bold text-blue-600 mt-2">
+                              {Math.round((stats.companyMonthEarnings / userProfile.companyGoal) * 100)}% Atingido
+                            </p>
+                          </div>
+                        )}
+                      </div>
+                    )}
 
                     <div className="bg-gray-50 border border-gray-100 rounded-2xl overflow-hidden divide-y divide-gray-100">
                       <button 
@@ -1869,7 +2100,10 @@ export default function App() {
                         </div>
                         <ChevronRight size={14} className="text-gray-300" />
                       </button>
-                      <button className="w-full flex items-center justify-between p-4 bg-white/50 hover:bg-white transition-colors group">
+                      <button 
+                        onClick={() => setIsManagingGoals(true)}
+                        className="w-full flex items-center justify-between p-4 bg-white/50 hover:bg-white transition-colors group"
+                      >
                         <div className="flex items-center gap-3">
                           <div className="w-8 h-8 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center">
                             <TrendingUp size={16} />
@@ -1955,7 +2189,7 @@ export default function App() {
                       </button>
                     </form>
                   </div>
-                ) : (
+                ) : isManagingPlatforms ? (
                   <div className="space-y-4">
                     <button 
                       onClick={() => setIsManagingPlatforms(false)}
@@ -1999,6 +2233,70 @@ export default function App() {
                         </div>
                       ))}
                     </div>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    <button 
+                      onClick={() => setIsManagingGoals(false)}
+                      className="flex items-center gap-2 text-[10px] font-bold text-blue-600 uppercase tracking-widest mb-2"
+                    >
+                      <ChevronRight size={14} className="rotate-180" />
+                      Voltar
+                    </button>
+                    
+                    <h2 className="text-lg font-extrabold text-gray-900 tracking-tight">Metas de Saldo</h2>
+                    <p className="text-[10px] text-gray-500 font-bold uppercase tracking-tight leading-relaxed">
+                      Defina suas metas mensais para cada categoria de saldo.
+                    </p>
+
+                    <form 
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        const form = e.target as HTMLFormElement;
+                        const deliveryGoal = Number((form.elements.namedItem('deliveryGoal') as HTMLInputElement).value);
+                        const companyGoal = Number((form.elements.namedItem('companyGoal') as HTMLInputElement).value);
+                        setUserProfile({ ...userProfile, deliveryGoal, companyGoal });
+                        setIsManagingGoals(false);
+                      }}
+                      className="space-y-4 pt-4"
+                    >
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-2 mb-1 px-1">
+                          <Bike size={12} className="text-orange-500" />
+                          <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Meta Saldo Entregas</label>
+                        </div>
+                        <input 
+                          name="deliveryGoal"
+                          type="number" 
+                          step="0.01"
+                          defaultValue={userProfile.deliveryGoal}
+                          placeholder="Ex: 2500.00"
+                          className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 text-sm font-bold text-orange-600 focus:outline-none focus:ring-2 focus:ring-orange-500 transition-all"
+                        />
+                      </div>
+
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-2 mb-1 px-1">
+                          <Briefcase size={12} className="text-blue-500" />
+                          <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Meta Saldo Empresa</label>
+                        </div>
+                        <input 
+                          name="companyGoal"
+                          type="number" 
+                          step="0.01"
+                          defaultValue={userProfile.companyGoal}
+                          placeholder="Ex: 5000.00"
+                          className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 text-sm font-bold text-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
+                        />
+                      </div>
+
+                      <button 
+                        type="submit"
+                        className="w-full bg-blue-600 text-white rounded-xl py-4 text-xs font-bold uppercase tracking-tight shadow-xl shadow-blue-200 hover:bg-blue-700 transition-all active:scale-[0.98] mt-4"
+                      >
+                        Salvar Metas
+                      </button>
+                    </form>
                   </div>
                 )}
 
