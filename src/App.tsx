@@ -53,6 +53,31 @@ function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
+// Helper to get local date in YYYY-MM-DD format
+const getLocalDate = () => {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
+// Helper to get local month in YYYY-MM format
+const getLocalMonth = () => {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  return `${year}-${month}`;
+};
+
+// Helper to format a Date object as YYYY-MM-DD
+const formatDate = (date: Date) => {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
 // Interfaces
 interface Trip {
   id: string;
@@ -63,6 +88,7 @@ interface Trip {
   fuelCost: number;
   platform: string;
   category: 'entrega' | 'empresa';
+  isExtra?: boolean;
 }
 
 interface Debt {
@@ -141,7 +167,7 @@ const StatCard = ({ title, value, icon: Icon, colorClass, shadowClass }: { title
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<'dash' | 'form' | 'history' | 'finance' | 'salary' | 'inventory' | 'receivables' | 'profile'>('dash');
-  const [selectedFinanceMonth, setSelectedFinanceMonth] = useState(new Date().toISOString().slice(0, 7));
+  const [selectedFinanceMonth, setSelectedFinanceMonth] = useState(getLocalMonth());
   const [financeCategory, setFinanceCategory] = useState<'entrega' | 'empresa'>('entrega');
   const [trips, setTrips] = useState<Trip[]>([]);
   const [debts, setDebts] = useState<Debt[]>([]);
@@ -172,7 +198,7 @@ export default function App() {
 
   // New Trip Form State
   const [formData, setFormData] = useState({
-    date: new Date().toISOString().split('T')[0],
+    date: getLocalDate(),
     earnings: '',
     kmStart: '',
     kmEnd: '',
@@ -317,7 +343,24 @@ export default function App() {
 
   // Derived Stats
   const stats = useMemo(() => {
-    const today = new Date().toISOString().split('T')[0];
+    const today = getLocalDate();
+
+    // Helper to get next Wednesday for a given date
+    const getNextWednesday = (dateStr: string) => {
+      const date = new Date(dateStr + 'T12:00:00');
+      const day = date.getDay(); // 0 (Sun) to 6 (Sat)
+      const daysUntilWednesday = (3 - day + 7) % 7;
+      const nextWednesday = new Date(date);
+      nextWednesday.setDate(date.getDate() + daysUntilWednesday);
+      return formatDate(nextWednesday);
+    };
+
+    // Helper to check if a trip's earnings are cleared (added to balance)
+    const isTripCleared = (trip: Trip) => {
+      if (trip.isExtra) return true;
+      const clearedDate = getNextWednesday(trip.date);
+      return today >= clearedDate;
+    };
     
     // Helper to get receivable payments by date
     const receivablePayments = (() => {
@@ -354,21 +397,19 @@ export default function App() {
     const netProfit = totalEarnings - totalFuel;
     const efficiency = totalKM > 0 ? (deliveryTrips.reduce((acc, t) => acc + t.earnings, 0) / totalKM).toFixed(2) : '0.00';
 
-    // Filtered by category (for finance tab specifically)
     const filteredTripsByCat = trips.filter(t => t.category === financeCategory);
     const filteredDebtsByCat = debts.filter(d => d.category === financeCategory);
 
-    // Monthly Stats
-    const currentMonth = new Date().toISOString().slice(0, 7); // YYYY-MM
-    const monthTripsTotal = trips.filter(t => t.date.startsWith(currentMonth));
-    const currentMonthReceivablePayments = receivablePayments.filter(p => p.date.startsWith(currentMonth));
-    const monthReceivableEarningsTotal = currentMonthReceivablePayments.reduce((acc, p) => acc + p.value, 0);
-    const monthEarningsTotal = monthTripsTotal.reduce((acc, t) => acc + t.earnings, 0) + monthReceivableEarningsTotal;
-    
-    const deliveryMonthEarnings = monthTripsTotal.filter(t => t.category === 'entrega').reduce((acc, t) => acc + t.earnings, 0) + monthReceivableEarningsTotal;
-    const companyMonthEarnings = monthTripsTotal.filter(t => t.category === 'empresa').reduce((acc, t) => acc + t.earnings, 0);
+    // Monthly Stats for Dashboard
+    const curMonth = getLocalMonth();
+    const mTripsTotal = trips.filter(t => t.date.startsWith(curMonth));
+    const mReceivablePaymentsTotal = receivablePayments.filter(p => p.date.startsWith(curMonth));
+    const mReceivableTotal = mReceivablePaymentsTotal.reduce((acc, p) => acc + p.value, 0);
+    const mEarningsTotal = mTripsTotal.reduce((acc, t) => acc + t.earnings, 0) + mReceivableTotal;
+    const mKMTotal = mTripsTotal.reduce((acc, t) => acc + (t.kmEnd - t.kmStart), 0);
 
-    const monthKMTotal = monthTripsTotal.reduce((acc, t) => acc + (t.kmEnd - t.kmStart), 0);
+    const dMonthEarnings = mTripsTotal.filter(t => t.category === 'entrega').reduce((acc, t) => acc + t.earnings, 0) + mReceivableTotal;
+    const cMonthEarnings = mTripsTotal.filter(t => t.category === 'empresa').reduce((acc, t) => acc + t.earnings, 0);
 
     // Grouping by Month for History
     const monthlySummary = trips.reduce((acc: any, trip) => {
@@ -382,7 +423,6 @@ export default function App() {
       return acc;
     }, {});
 
-    // Add receivable earnings to monthly summary
     receivablePayments.forEach(p => {
       const month = p.date.slice(0, 7);
       if (!monthlySummary[month]) {
@@ -396,12 +436,33 @@ export default function App() {
     // Finance Months List
     const fMonths = (() => {
        const months = new Set<string>();
-       months.add(new Date().toISOString().slice(0, 7));
+       months.add(getLocalMonth());
        trips.forEach(t => months.add(t.date.slice(0, 7)));
        debts.forEach(d => months.add(d.dueDate.slice(0, 7)));
        receivablePayments.forEach(p => months.add(p.date.slice(0, 7)));
        return Array.from(months).sort();
     })();
+
+    // Helper to calculate balance for a specific month and category
+    const calculateMonthBalance = (m: string, cat: string) => {
+      const mTrips = trips.filter(t => t.date.startsWith(m) && t.category === cat);
+      const mReceivables = cat === 'entrega' 
+        ? receivablePayments.filter(p => p.date.startsWith(m)).reduce((acc, p) => acc + p.value, 0)
+        : 0;
+      const mClearedGross = mTrips.filter(t => isTripCleared(t)).reduce((acc, t) => acc + t.earnings, 0) + mReceivables;
+      const mFuel = mTrips.reduce((acc, t) => acc + t.fuelCost, 0);
+      const mPaidDebts = debts.filter(d => d.dueDate.startsWith(m) && d.category === cat && d.isPaid).reduce((acc, d) => acc + d.value, 0);
+      const mSalaryData = salaries.filter(s => s.month === m).reduce((acc, s) => acc + s.paidValue, 0);
+
+      return cat === 'entrega' 
+        ? mClearedGross - mFuel - mPaidDebts
+        : mClearedGross - mSalaryData;
+    };
+
+    // Calculate carry-over balance from previous months
+    const carryOverBalance = fMonths
+      .filter(m => m < selectedFinanceMonth)
+      .reduce((acc, m) => acc + calculateMonthBalance(m, financeCategory), 0);
 
     // Monthly Finance Details (for selected category AND month)
     const filteredByMonthDebts = filteredDebtsByCat.filter(d => d.dueDate.startsWith(selectedFinanceMonth));
@@ -413,7 +474,13 @@ export default function App() {
     const monthReceivableEarningsCat = financeCategory === 'entrega' 
       ? receivablePayments.filter(p => p.date.startsWith(selectedFinanceMonth)).reduce((acc, p) => acc + p.value, 0)
       : 0;
+    
+    // Total gross includes everything (for display)
     const monthTotalGrossEarningsCat = monthTripsCat.reduce((acc, t) => acc + t.earnings, 0) + monthReceivableEarningsCat;
+    
+    // Cleared gross only includes trips that have reached their payout Wednesday
+    const monthClearedGrossEarningsCat = monthTripsCat.filter(t => isTripCleared(t)).reduce((acc, t) => acc + t.earnings, 0) + monthReceivableEarningsCat;
+    
     const monthFuelCostCat = monthTripsCat.reduce((acc, t) => acc + t.fuelCost, 0);
     
     const monthSalariesPaid = salaries
@@ -421,8 +488,10 @@ export default function App() {
       .reduce((acc, s) => acc + s.paidValue, 0);
 
     const monthBalanceCat = financeCategory === 'entrega' 
-      ? monthTotalGrossEarningsCat - monthFuelCostCat - monthPaidDebtsCat
-      : monthTotalGrossEarningsCat - monthSalariesPaid;
+      ? monthClearedGrossEarningsCat - monthFuelCostCat - monthPaidDebtsCat
+      : monthClearedGrossEarningsCat - monthSalariesPaid;
+
+    const totalBalanceCat = carryOverBalance + monthBalanceCat;
 
     const monthNetProfitCat = monthTotalGrossEarningsCat - monthFuelCostCat - monthTotalDebtsCat;
 
@@ -433,7 +502,7 @@ export default function App() {
     const last7Days = Array.from({ length: 6 }, (_, i) => {
       const d = new Date();
       d.setDate(d.getDate() - (5 - i));
-      const dateStr = d.toISOString().split('T')[0];
+      const dateStr = formatDate(d);
       const dayTripEarnings = trips.filter(t => t.date === dateStr).reduce((acc, t) => acc + t.earnings, 0);
       const dayReceivableEarnings = receivablePayments.filter(p => p.date === dateStr).reduce((acc, p) => acc + p.value, 0);
       return {
@@ -446,8 +515,8 @@ export default function App() {
     return { 
       todayEarnings, 
       todayKM, 
-      monthEarnings: monthEarningsTotal, 
-      monthKM: monthKMTotal, 
+      monthEarnings: mEarningsTotal, 
+      monthKM: mKMTotal, 
       totalEarnings, 
       totalKM, 
       totalFuel, 
@@ -466,8 +535,10 @@ export default function App() {
       monthPendingDebts: monthPendingDebtsCat,
       monthBalance: monthBalanceCat,
       monthSalariesPaid,
-      deliveryMonthEarnings,
-      companyMonthEarnings
+      deliveryMonthEarnings: dMonthEarnings,
+      companyMonthEarnings: cMonthEarnings,
+      carryOverBalance,
+      totalBalance: totalBalanceCat
     };
   }, [trips, debts, salaries, financeCategory, selectedFinanceMonth]);
 
@@ -494,13 +565,14 @@ export default function App() {
       kmEnd: Number(formData.kmEnd),
       fuelCost: Number(formData.fuelCost || 0),
       platform: activeTrip.platform,
-      category: 'entrega' // Standard trips are always delivery for now
+      category: 'entrega', // Standard trips are always delivery for now
+      isExtra: false
     };
 
     setTrips([...trips, newTrip]);
     setActiveTrip(null);
     setFormData({
-      date: new Date().toISOString().split('T')[0],
+      date: getLocalDate(),
       earnings: '',
       kmStart: '',
       kmEnd: '',
@@ -533,20 +605,27 @@ export default function App() {
       kmEnd: 0,
       fuelCost: 0,
       platform: title, // Use title as platform name for manual entries
-      category
+      category,
+      isExtra: true
     };
     setTrips([...trips, newGain]);
   };
 
   const addDebt = (title: string, value: number, dueDate: string, category: 'entrega' | 'empresa' = 'entrega', parcels: number = 1) => {
     const newDebts: Debt[] = [];
-    const baseDate = new Date(dueDate + 'T00:00:00');
+    const baseDate = new Date(dueDate + 'T12:00:00');
+    const targetDay = baseDate.getDate();
 
     for (let i = 0; i < parcels; i++) {
       const currentParcelDate = new Date(baseDate);
       currentParcelDate.setMonth(baseDate.getMonth() + i);
       
-      const formattedDate = currentParcelDate.toISOString().split('T')[0];
+      // Handle month overflow (e.g., Jan 31 -> Feb 28/29)
+      if (currentParcelDate.getDate() !== targetDay) {
+        currentParcelDate.setDate(0);
+      }
+      
+      const formattedDate = formatDate(currentParcelDate);
       
       newDebts.push({
         id: crypto.randomUUID(),
@@ -649,13 +728,21 @@ export default function App() {
   const addReceivable = (debtorName: string, totalValue: number, installments: number, date: string, observation: string = '') => {
     const installmentList: ReceivableInstallment[] = [];
     const installmentValue = totalValue / installments;
+    const baseDate = new Date(date + 'T12:00:00');
+    const targetDay = baseDate.getDate();
     
     for (let i = 0; i < installments; i++) {
-      const dueDate = new Date(date + 'T00:00:00');
-      dueDate.setMonth(dueDate.getMonth() + i);
+      const dueDate = new Date(baseDate);
+      dueDate.setMonth(baseDate.getMonth() + i);
+      
+      // Handle month overflow
+      if (dueDate.getDate() !== targetDay) {
+        dueDate.setDate(0);
+      }
+
       installmentList.push({
         id: crypto.randomUUID(),
-        dueDate: dueDate.toISOString().split('T')[0],
+        dueDate: formatDate(dueDate),
         value: installmentValue,
         isPaid: false
       });
@@ -818,7 +905,7 @@ export default function App() {
                           maxBarSize={30}
                         >
                           {stats.chartData.map((entry, index) => (
-                            <Cell key={`cell-${index}`} fill={entry.date === new Date().toISOString().split('T')[0] ? '#2563EB' : '#E5E7EB'} />
+                            <Cell key={`cell-${index}`} fill={entry.date === getLocalDate() ? '#2563EB' : '#E5E7EB'} />
                           ))}
                         </Bar>
                       </BarChart>
@@ -1172,20 +1259,51 @@ export default function App() {
                   financeCategory === 'entrega' ? "bg-gray-900" : "bg-blue-900"
                 )}>
                   <div className="absolute -right-4 -top-4 w-24 h-24 bg-blue-500/20 rounded-full blur-2xl"></div>
-                  <p className="text-[10px] uppercase font-bold tracking-[0.2em] opacity-60 mb-1">
-                    Saldo {financeCategory === 'entrega' ? 'Entregas' : 'Minha Empresa'} • {new Date(selectedFinanceMonth + '-01T00:00:00').toLocaleDateString('pt-BR', { month: 'short' })}
-                  </p>
-                  <h2 className="text-3xl font-black tracking-tighter mb-4">
-                    {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(stats.monthBalance)}
+                  
+                  <div className="flex justify-between items-start mb-2">
+                    <p className="text-[10px] uppercase font-bold tracking-[0.2em] opacity-60">
+                      Saldo Acumulado • {new Date(selectedFinanceMonth + '-01T00:00:00').toLocaleDateString('pt-BR', { month: 'short' })}
+                    </p>
+                    <div className="text-right">
+                      <p className="text-[8px] uppercase font-bold opacity-40">Ciclo de Pagamento</p>
+                      <p className="text-[9px] font-bold text-blue-400">Quarta-feira</p>
+                    </div>
+                  </div>
+
+                  <h2 className={cn(
+                    "text-3xl font-black tracking-tighter mb-4",
+                    stats.totalBalance >= 0 ? "text-white" : "text-red-300"
+                  )}>
+                    {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(stats.totalBalance)}
                   </h2>
-                  <div className="grid grid-cols-2 gap-4 border-t border-white/10 pt-4">
+                  
+                  <div className="grid grid-cols-2 gap-4 border-t border-white/10 pt-4 mb-2">
                     <div>
-                      <p className="text-[9px] uppercase font-bold opacity-40">Ganhos (Bruto)</p>
-                      <p className="text-sm font-bold text-emerald-400">{new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(stats.monthTotalGrossEarnings)}</p>
+                      <p className="text-[9px] uppercase font-bold opacity-40">Saldo Liberado</p>
+                      <p className={cn("text-xs font-bold", stats.monthBalance >= 0 ? "text-emerald-400" : "text-red-300")}>
+                        {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(stats.monthBalance)}
+                      </p>
                     </div>
                     <div className="text-right">
-                      <p className="text-[9px] uppercase font-bold opacity-40">Despesas Pagas</p>
-                      <p className="text-sm font-bold text-red-300">-{new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(stats.monthPaidDebts + stats.monthFuelCost)}</p>
+                      {stats.carryOverBalance !== 0 && (
+                        <div>
+                          <p className="text-[9px] uppercase font-bold opacity-40">Vindo do Passado</p>
+                          <p className={cn("text-xs font-bold", stats.carryOverBalance >= 0 ? "text-emerald-400" : "text-red-300")}>
+                            {stats.carryOverBalance >= 0 ? '+' : ''}{new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(stats.carryOverBalance)}
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4 border-t border-white/5 pt-3">
+                    <div>
+                      <p className="text-[9px] uppercase font-bold opacity-40">Ganhos (Mês)</p>
+                      <p className="text-xs font-bold text-emerald-400">{new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(stats.monthTotalGrossEarnings)}</p>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-[9px] uppercase font-bold opacity-40">Despesas (Mês)</p>
+                      <p className="text-xs font-bold text-red-300">-{new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(financeCategory === 'entrega' ? (stats.monthPaidDebts + stats.monthFuelCost) : stats.monthSalariesPaid)}</p>
                     </div>
                   </div>
                 </div>
@@ -1228,7 +1346,7 @@ export default function App() {
                     )}
                     <div className="grid grid-cols-2 gap-3">
                       <input name="value" type="number" step="0.01" required placeholder="Valor R$" className="w-full bg-gray-50 border border-gray-100 rounded-xl px-4 py-2 text-xs font-bold focus:ring-2 focus:ring-blue-500 outline-none" />
-                      <input name="date" type="date" required className="w-full bg-gray-50 border border-gray-100 rounded-xl px-4 py-2 text-xs font-medium focus:ring-2 focus:ring-blue-500 outline-none" defaultValue={new Date().toISOString().split('T')[0]} />
+                      <input name="date" type="date" required className="w-full bg-gray-50 border border-gray-100 rounded-xl px-4 py-2 text-xs font-medium focus:ring-2 focus:ring-blue-500 outline-none" defaultValue={getLocalDate()} />
                     </div>
                     <button type="submit" className="w-full bg-emerald-600 text-white rounded-xl py-2 text-[10px] font-bold uppercase tracking-widest shadow-lg shadow-emerald-100 active:scale-95 transition-all">
                       {showSaveFeedback ? '✓ Salvo com Sucesso!' : 'Salvar Ganho'}
@@ -1807,7 +1925,7 @@ export default function App() {
                     <div className="grid grid-cols-2 gap-3">
                       <div className="space-y-1">
                         <label className="text-[9px] font-bold text-gray-400 uppercase ml-2">Data Inicial</label>
-                        <input name="date" type="date" required defaultValue={new Date().toISOString().split('T')[0]} className="w-full bg-gray-50 border border-gray-100 rounded-xl px-4 py-2 text-xs font-bold focus:ring-2 focus:ring-emerald-500 outline-none" />
+                        <input name="date" type="date" required defaultValue={getLocalDate()} className="w-full bg-gray-50 border border-gray-100 rounded-xl px-4 py-2 text-xs font-bold focus:ring-2 focus:ring-emerald-500 outline-none" />
                       </div>
                       <div className="space-y-1">
                         <label className="text-[9px] font-bold text-gray-400 uppercase ml-2">Observação (Opcional)</label>
