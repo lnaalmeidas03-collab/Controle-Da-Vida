@@ -25,6 +25,7 @@ import {
   Search,
   Wallet,
   AlertCircle,
+  Clock,
   CheckCircle2,
   Briefcase,
   Bike,
@@ -185,6 +186,8 @@ export default function App() {
   const [editingDebt, setEditingDebt] = useState<Debt | null>(null);
   const [editingInventoryItem, setEditingInventoryItem] = useState<InventoryItem | null>(null);
   const [editingReceivable, setEditingReceivable] = useState<Receivable | null>(null);
+  const [isViewingDebtProjection, setIsViewingDebtProjection] = useState(false);
+  const [editingSalary, setEditingSalary] = useState<EmployeeSalary | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const mainRef = useRef<HTMLElement>(null);
   const scrollRef = useRef<HTMLInputElement>(null);
@@ -411,6 +414,14 @@ export default function App() {
     const dMonthEarnings = mTripsTotal.filter(t => t.category === 'entrega').reduce((acc, t) => acc + t.earnings, 0) + mReceivableTotal;
     const cMonthEarnings = mTripsTotal.filter(t => t.category === 'empresa').reduce((acc, t) => acc + t.earnings, 0);
 
+    const mFuelTotal = mTripsTotal.filter(t => t.category === 'entrega').reduce((acc, t) => acc + t.fuelCost, 0);
+    const mDeliveryDebts = debts.filter(d => d.dueDate.startsWith(curMonth) && d.category === 'entrega').reduce((acc, d) => acc + d.value, 0);
+    const mCompanyDebts = debts.filter(d => d.dueDate.startsWith(curMonth) && d.category === 'empresa').reduce((acc, d) => acc + d.value, 0);
+    const mSalariesTotal = salaries.filter(s => s.month === curMonth).reduce((acc, s) => acc + s.totalValue, 0);
+
+    const monthDeliveryProfit = dMonthEarnings - mFuelTotal - mDeliveryDebts;
+    const monthCompanyProfit = cMonthEarnings - mSalariesTotal - mCompanyDebts;
+
     // Grouping by Month for History
     const monthlySummary = trips.reduce((acc: any, trip) => {
       const month = trip.date.slice(0, 7);
@@ -525,6 +536,8 @@ export default function App() {
       chartData: last7Days,
       monthlySummaryList,
       totalPendingDebts,
+      monthDeliveryProfit,
+      monthCompanyProfit,
       financeMonths: fMonths,
       filteredDebtsByMonth: filteredByMonthDebts,
       monthNetProfit: monthNetProfitCat,
@@ -669,8 +682,29 @@ export default function App() {
     }));
   };
 
+  const updateSalary = (updated: EmployeeSalary) => {
+    setSalaries(salaries.map(s => s.id === updated.id ? updated : s));
+    setEditingSalary(null);
+  };
+
   const deleteSalary = (id: string) => {
     setSalaries(salaries.filter(s => s.id !== id));
+  };
+
+  // Helper for debt projection
+  const getDebtProjection = (category: 'entrega' | 'empresa') => {
+    const unpaidDebts = debts.filter(d => !d.isPaid && d.category === category);
+    if (unpaidDebts.length === 0) return [];
+
+    const projection: Record<string, number> = {};
+    unpaidDebts.forEach(d => {
+      const monthStr = d.dueDate.slice(0, 7);
+      projection[monthStr] = (projection[monthStr] || 0) + d.value;
+    });
+
+    return Object.entries(projection)
+      .sort(([m1], [m2]) => m1.localeCompare(m2))
+      .map(([month, total]) => ({ month, total }));
   };
 
   const [isCounting, setIsCounting] = useState(false);
@@ -887,6 +921,34 @@ export default function App() {
                   <div className="bg-gray-50 border border-gray-100 rounded-xl p-3">
                     <p className="text-[8px] text-gray-400 font-bold uppercase tracking-tight mb-1">Eficiência</p>
                     <p className="text-xs font-bold text-gray-800">R$ {stats.efficiency}/km</p>
+                  </div>
+                </div>
+
+                {/* Profit Separation */}
+                <div className="flex gap-3">
+                  <div className="flex-1 bg-white border border-gray-100 rounded-2xl p-4 shadow-sm relative overflow-hidden group">
+                    <div className="absolute -right-4 -bottom-4 w-16 h-16 bg-orange-500/5 rounded-full blur-xl group-hover:bg-orange-500/10 transition-all"></div>
+                    <div className="flex items-center gap-2 mb-1">
+                      <div className="w-5 h-5 rounded-lg bg-orange-50 flex items-center justify-center">
+                        <Bike size={10} className="text-orange-500" />
+                      </div>
+                      <p className="text-[10px] text-gray-400 font-bold uppercase tracking-tight">Lucro Entrega</p>
+                    </div>
+                    <p className={cn("text-lg font-black tracking-tight", stats.monthDeliveryProfit >= 0 ? "text-gray-900" : "text-red-600")}>
+                      {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(stats.monthDeliveryProfit)}
+                    </p>
+                  </div>
+                  <div className="flex-1 bg-white border border-gray-100 rounded-2xl p-4 shadow-sm relative overflow-hidden group">
+                    <div className="absolute -right-4 -bottom-4 w-16 h-16 bg-blue-500/5 rounded-full blur-xl group-hover:bg-blue-500/10 transition-all"></div>
+                    <div className="flex items-center gap-2 mb-1">
+                      <div className="w-5 h-5 rounded-lg bg-blue-50 flex items-center justify-center">
+                        <Briefcase size={10} className="text-blue-500" />
+                      </div>
+                      <p className="text-[10px] text-gray-400 font-bold uppercase tracking-tight">Lucro Empresa</p>
+                    </div>
+                    <p className={cn("text-lg font-black tracking-tight", stats.monthCompanyProfit >= 0 ? "text-gray-900" : "text-red-600")}>
+                      {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(stats.monthCompanyProfit)}
+                    </p>
                   </div>
                 </div>
 
@@ -1444,12 +1506,20 @@ export default function App() {
                           </div>
                           <div className="flex justify-between items-center text-[9px] font-bold uppercase tracking-tight text-gray-400">
                             <p className="text-[9px] uppercase font-bold text-gray-400 tracking-tight">Vencimento: {debt.dueDate.split('-').reverse().join('/')}</p>
-                            <div className="flex gap-3">
-                              <button onClick={() => setEditingDebt(debt)} className="text-blue-400 hover:text-blue-600 font-bold text-[9px] uppercase">Editar</button>
-                              <button onClick={() => toggleDebtPaid(debt.id)} className={cn("underline decoration-2 font-bold", debt.isPaid ? "text-blue-600 decoration-blue-100" : "text-emerald-600 decoration-emerald-100")}>
-                                {debt.isPaid ? 'Reabrir' : 'Pagar'}
+                            <div className="flex gap-2 items-center">
+                              <button onClick={() => setEditingDebt(debt)} className="text-blue-400 hover:text-blue-600 font-bold text-[9px] uppercase px-1">Editar</button>
+                              <button 
+                                onClick={() => toggleDebtPaid(debt.id)} 
+                                className={cn(
+                                  "text-[9px] font-black uppercase transition-all px-3 py-1 rounded-full", 
+                                  debt.isPaid 
+                                    ? "text-blue-500 bg-blue-50" 
+                                    : "text-white bg-emerald-500 hover:bg-emerald-600 shadow-sm shadow-emerald-100"
+                                )}
+                              >
+                                {debt.isPaid ? 'Reabrir' : 'Pagar com Saldo'}
                               </button>
-                              <button onClick={() => deleteDebt(debt.id)} className="text-red-300 hover:text-red-500 font-bold">Excluir</button>
+                              <button onClick={() => deleteDebt(debt.id)} className="text-red-300 hover:text-red-500 font-bold text-[9px] uppercase px-1">Excluir</button>
                             </div>
                           </div>
                         </div>
@@ -1471,23 +1541,23 @@ export default function App() {
                 <div className="bg-gray-900 border border-gray-800 rounded-[32px] p-6 shadow-2xl relative overflow-hidden">
                   <div className="absolute -right-4 -top-4 w-24 h-24 bg-blue-500/10 rounded-full blur-2xl"></div>
                   <p className="text-[10px] uppercase font-bold tracking-[0.2em] opacity-60 mb-1 text-white">Total à Pagar (Mês)</p>
-                  <h2 className="text-3xl font-black tracking-tighter mb-4 text-white">
-                    {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(
-                      salaries
-                        .filter(s => s.month === selectedFinanceMonth)
-                        .reduce((acc, s) => acc + (s.totalValue - s.paidValue), 0)
-                    )}
-                  </h2>
-                  <div className="flex justify-between items-center bg-white/5 rounded-xl p-3 border border-white/5">
-                    <span className="text-[9px] text-gray-400 font-bold uppercase tracking-tight">Funcionárias: {salaries.filter(s => s.month === selectedFinanceMonth).length}</span>
-                    <span className="text-[9px] text-emerald-400 font-bold uppercase tracking-tight">
-                      Já pago: {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(
+                    <h2 className="text-3xl font-black tracking-tighter mb-4 text-white">
+                      {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(
                         salaries
-                          .filter(s => s.month === selectedFinanceMonth)
-                          .reduce((acc, s) => acc + s.paidValue, 0)
+                          .filter(s => s.month === selectedFinanceMonth || (s.month < selectedFinanceMonth && s.paidValue < s.totalValue))
+                          .reduce((acc, s) => acc + (s.totalValue - s.paidValue), 0)
                       )}
-                    </span>
-                  </div>
+                    </h2>
+                    <div className="flex justify-between items-center bg-white/5 rounded-xl p-3 border border-white/5">
+                      <span className="text-[9px] text-gray-400 font-bold uppercase tracking-tight">Funcionárias: {salaries.filter(s => s.month === selectedFinanceMonth || (s.month < selectedFinanceMonth && s.paidValue < s.totalValue)).length}</span>
+                      <span className="text-[9px] text-emerald-400 font-bold uppercase tracking-tight">
+                        Já pago: {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(
+                          salaries
+                            .filter(s => s.month === selectedFinanceMonth || (s.month < selectedFinanceMonth && s.paidValue < s.totalValue))
+                            .reduce((acc, s) => acc + s.paidValue, 0)
+                        )}
+                      </span>
+                    </div>
                 </div>
 
                 {/* Add Salary Form */}
@@ -1525,33 +1595,47 @@ export default function App() {
                     Gestão de Salários
                     <span className="text-[10px] text-gray-400 font-bold uppercase">{selectedFinanceMonth}</span>
                   </h3>
-                  {salaries.filter(s => s.month === selectedFinanceMonth).length === 0 ? (
+                  {salaries.filter(s => s.month === selectedFinanceMonth || (s.month < selectedFinanceMonth && s.paidValue < s.totalValue)).length === 0 ? (
                     <div className="text-center py-10 bg-gray-50 rounded-2xl border border-dashed border-gray-200 text-xs text-gray-400 font-medium italic">
-                      Nenhum salário para este mês.
+                      Nenhum salário pendente.
                     </div>
                   ) : (
                     salaries
-                      .filter(s => s.month === selectedFinanceMonth)
+                      .filter(s => s.month === selectedFinanceMonth || (s.month < selectedFinanceMonth && s.paidValue < s.totalValue))
+                      .sort((a, b) => b.month.localeCompare(a.month))
                       .map(salary => {
                         const remaining = salary.totalValue - salary.paidValue;
                         const progress = (salary.paidValue / salary.totalValue) * 100;
+                        const isPastDue = salary.month < selectedFinanceMonth && remaining > 0;
                         
                         return (
-                          <div key={salary.id} className="bg-white border border-gray-100 rounded-2xl p-4 shadow-sm relative overflow-hidden group">
+                          <div key={salary.id} className={cn(
+                            "bg-white border rounded-2xl p-4 shadow-sm relative overflow-hidden group",
+                            isPastDue ? "border-orange-200" : "border-gray-100"
+                          )}>
                             {progress >= 100 && (
                               <div className="absolute top-0 right-0 bg-emerald-500 text-white text-[8px] font-black px-2 py-0.5 rounded-bl-lg uppercase tracking-widest z-10">
                                 Pago
                               </div>
                             )}
                             
+                            {isPastDue && (
+                              <div className="mb-2 inline-flex items-center gap-1.5 bg-orange-50 text-[8px] font-black uppercase text-orange-600 px-2 py-0.5 rounded-full border border-orange-100">
+                                <Clock size={8} /> Pendente do Passado ({salary.month})
+                              </div>
+                            )}
+
                             <div className="flex justify-between items-start mb-3">
                               <div>
                                 <h4 className="text-sm font-bold text-gray-900">{salary.name}</h4>
                                 <p className="text-[10px] font-bold text-gray-400 uppercase">Total: {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(salary.totalValue)}</p>
                               </div>
-                              <div className="text-right">
+                              <div className="text-right flex flex-col items-end">
                                 <p className="text-sm font-black text-gray-900">{new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(remaining)}</p>
-                                <p className="text-[9px] font-bold text-gray-400 uppercase tracking-tighter">Pendente</p>
+                                <div className="flex gap-2 mt-1">
+                                  <button onClick={() => setEditingSalary(salary)} className="text-[9px] font-bold text-blue-400 uppercase hover:text-blue-600 transition-colors">Editar</button>
+                                  <p className="text-[9px] font-bold text-gray-400 uppercase tracking-tighter">Pendente</p>
+                                </div>
                               </div>
                             </div>
 
@@ -2066,9 +2150,10 @@ export default function App() {
                                 )}
                                 <button 
                                   onClick={() => setEditingReceivable(r)}
-                                  className="p-2 text-gray-300 hover:text-blue-500 transition-colors"
+                                  className="flex items-center gap-1 px-3 py-2 text-[10px] font-bold text-blue-500 hover:bg-blue-50 rounded-lg transition-colors uppercase tracking-tight"
                                 >
-                                  <Edit2 size={16} />
+                                  <Edit2 size={12} />
+                                  <span>Editar</span>
                                 </button>
                                 <button 
                                   onClick={() => deleteReceivable(r.id)}
@@ -2117,7 +2202,7 @@ export default function App() {
                 animate={{ opacity: 1 }}
                 className="space-y-6"
               >
-                {!isManagingPlatforms && !isEditingProfile && !isManagingGoals ? (
+                {!isManagingPlatforms && !isEditingProfile && !isManagingGoals && !isViewingDebtProjection ? (
                   <>
                     <div className="flex flex-col items-center justify-center py-8">
                       <div className="relative">
@@ -2231,6 +2316,18 @@ export default function App() {
                         <ChevronRight size={14} className="text-gray-300" />
                       </button>
                       <button 
+                        onClick={() => setIsViewingDebtProjection(true)}
+                        className="w-full flex items-center justify-between p-4 bg-white/50 hover:bg-white transition-colors group"
+                      >
+                        <div className="flex items-center gap-3">
+                          <div className="w-8 h-8 rounded-lg bg-red-50 text-red-600 flex items-center justify-center">
+                            <Calendar size={16} />
+                          </div>
+                          <span className="text-xs font-bold text-gray-700 uppercase tracking-tight">Projeção de Dívidas</span>
+                        </div>
+                        <ChevronRight size={14} className="text-gray-300" />
+                      </button>
+                      <button 
                         onClick={() => {
                           if (confirm("Deseja realmente limpar todos os dados?")) {
                             localStorage.removeItem('runtracker_trips');
@@ -2257,6 +2354,91 @@ export default function App() {
                       </button>
                     </div>
                   </>
+                ) : isViewingDebtProjection ? (
+                  <div className="space-y-6">
+                    <button 
+                      onClick={() => setIsViewingDebtProjection(false)}
+                      className="flex items-center gap-2 text-[10px] font-bold text-blue-600 uppercase tracking-widest mb-2"
+                    >
+                      <ChevronRight size={14} className="rotate-180" />
+                      Voltar
+                    </button>
+                    
+                    <div className="space-y-2">
+                       <h2 className="text-lg font-extrabold text-gray-900 tracking-tight">Projeção de Dívidas</h2>
+                       <p className="text-[10px] text-gray-400 font-medium uppercase tracking-wider">Visualize o horizonte de quitação dos seus débitos</p>
+                    </div>
+
+                    <div className="grid grid-cols-1 gap-6">
+                      {/* Categoria Entrega */}
+                      <div className="space-y-4">
+                        <div className="flex items-center gap-2 bg-orange-50 px-3 py-1.5 rounded-full w-fit border border-orange-100">
+                          <Bike size={12} className="text-orange-500" />
+                          <span className="text-[10px] font-black text-orange-600 uppercase">Dívidas - Entrega</span>
+                        </div>
+                        
+                        {getDebtProjection('entrega').length === 0 ? (
+                           <div className="bg-gray-50 rounded-2xl p-6 border border-dashed border-gray-200 text-center">
+                              <p className="text-xs text-gray-400 font-medium italic">Nenhuma dívida pendente nesta categoria.</p>
+                           </div>
+                        ) : (
+                          <div className="space-y-3">
+                            {getDebtProjection('entrega').map((proj, idx) => (
+                              <div key={proj.month} className="bg-white border border-orange-100 rounded-2xl p-4 shadow-sm flex justify-between items-center relative overflow-hidden">
+                                <div className="absolute left-0 top-0 bottom-0 w-1 bg-orange-500" />
+                                <div>
+                                  <p className="text-[9px] font-black text-gray-400 uppercase tracking-tighter mb-0.5">Vencimento em</p>
+                                  <p className="text-sm font-bold text-gray-800 capitalize">
+                                    {new Date(proj.month + '-01T12:00:00').toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })}
+                                  </p>
+                                </div>
+                                <div className="text-right">
+                                  <p className="text-[9px] font-black text-orange-500 uppercase tracking-tight mb-0.5">Total Mensal</p>
+                                  <p className="text-sm font-black text-gray-900">
+                                    {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(proj.total)}
+                                  </p>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Categoria Empresa */}
+                      <div className="space-y-4">
+                        <div className="flex items-center gap-2 bg-blue-50 px-3 py-1.5 rounded-full w-fit border border-blue-100">
+                          <Briefcase size={12} className="text-blue-500" />
+                          <span className="text-[10px] font-black text-blue-600 uppercase">Dívidas - Empresa</span>
+                        </div>
+                        
+                        {getDebtProjection('empresa').length === 0 ? (
+                           <div className="bg-gray-50 rounded-2xl p-6 border border-dashed border-gray-200 text-center">
+                              <p className="text-xs text-gray-400 font-medium italic">Nenhuma dívida pendente nesta categoria.</p>
+                           </div>
+                        ) : (
+                          <div className="space-y-3">
+                            {getDebtProjection('empresa').map((proj, idx) => (
+                              <div key={proj.month} className="bg-white border border-blue-100 rounded-2xl p-4 shadow-sm flex justify-between items-center relative overflow-hidden">
+                                <div className="absolute left-0 top-0 bottom-0 w-1 bg-blue-500" />
+                                <div>
+                                  <p className="text-[9px] font-black text-gray-400 uppercase tracking-tighter mb-0.5">Vencimento em</p>
+                                  <p className="text-sm font-bold text-gray-800 capitalize">
+                                    {new Date(proj.month + '-01T12:00:00').toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })}
+                                  </p>
+                                </div>
+                                <div className="text-right">
+                                  <p className="text-[9px] font-black text-blue-500 uppercase tracking-tight mb-0.5">Total Mensal</p>
+                                  <p className="text-sm font-black text-gray-900">
+                                    {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(proj.total)}
+                                  </p>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
                 ) : isEditingProfile ? (
                   <div className="space-y-4">
                     <button 
@@ -2665,6 +2847,7 @@ export default function App() {
                       debtorName: (form.elements.namedItem('debtorName') as HTMLInputElement).value,
                       totalValue: Number((form.elements.namedItem('totalValue') as HTMLInputElement).value),
                       date: (form.elements.namedItem('date') as HTMLInputElement).value,
+                      observation: (form.elements.namedItem('observation') as HTMLInputElement).value,
                     };
                     updateReceivable(updated);
                   }}
@@ -2686,11 +2869,79 @@ export default function App() {
                     </div>
                   </div>
 
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest px-1">Observação (Referência)</label>
+                    <input name="observation" defaultValue={editingReceivable.observation || ''} placeholder="Ex: Referente a..." className="w-full bg-gray-50 border border-gray-100 rounded-xl px-4 py-3 text-sm font-medium focus:ring-2 focus:ring-emerald-500 outline-none" />
+                  </div>
+
                   <div className="flex gap-3 pt-4">
                     <button type="button" onClick={() => setEditingReceivable(null)} className="flex-1 bg-gray-100 text-gray-500 rounded-xl py-3 text-sm font-bold hover:bg-gray-200 transition-all">
                       Cancelar
                     </button>
                     <button type="submit" className="flex-2 bg-emerald-600 text-white rounded-xl py-3 text-sm font-bold shadow-lg shadow-emerald-100 hover:bg-emerald-700 active:scale-95 transition-all">
+                      Salvar Alterações
+                    </button>
+                  </div>
+                </form>
+              </motion.div>
+            </motion.div>
+          )}
+
+          {editingSalary && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="absolute inset-0 bg-black/60 backdrop-blur-sm z-[100] flex items-end sm:items-center justify-center p-4"
+            >
+              <motion.div
+                initial={{ y: 100, opacity: 0 }}
+                animate={{ y: 0, opacity: 1 }}
+                exit={{ y: 100, opacity: 0 }}
+                className="bg-white w-full max-w-md rounded-t-3xl sm:rounded-3xl p-6 shadow-2xl"
+              >
+                <div className="flex justify-between items-center mb-6">
+                  <h3 className="text-lg font-bold text-gray-800">Editar Salário</h3>
+                  <button onClick={() => setEditingSalary(null)} className="text-gray-400 hover:text-gray-600">
+                    <Trash2 size={20} className="rotate-45" />
+                  </button>
+                </div>
+
+                <form 
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    const form = e.currentTarget;
+                    const updated: EmployeeSalary = {
+                      ...editingSalary,
+                      name: (form.elements.namedItem('name') as HTMLInputElement).value,
+                      totalValue: Number((form.elements.namedItem('totalValue') as HTMLInputElement).value),
+                      month: (form.elements.namedItem('month') as HTMLInputElement).value,
+                    };
+                    updateSalary(updated);
+                  }}
+                  className="space-y-4"
+                >
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest px-1">Nome do Funcionário</label>
+                    <input name="name" defaultValue={editingSalary.name} required className="w-full bg-gray-50 border border-gray-100 rounded-xl px-4 py-3 text-sm font-bold focus:ring-2 focus:ring-blue-500 outline-none" />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest px-1">Salário Total R$</label>
+                      <input name="totalValue" type="number" step="0.01" defaultValue={editingSalary.totalValue} required className="w-full bg-gray-50 border border-gray-100 rounded-xl px-4 py-3 text-sm font-bold text-blue-600 focus:ring-2 focus:ring-blue-500 outline-none" />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest px-1">Mês de Referência</label>
+                      <input name="month" type="month" defaultValue={editingSalary.month} required className="w-full bg-gray-50 border border-gray-100 rounded-xl px-4 py-3 text-sm font-bold focus:ring-2 focus:ring-blue-500 outline-none" />
+                    </div>
+                  </div>
+
+                  <div className="flex gap-3 pt-4">
+                    <button type="button" onClick={() => setEditingSalary(null)} className="flex-1 bg-gray-100 text-gray-500 rounded-xl py-3 text-sm font-bold hover:bg-gray-200 transition-all">
+                      Cancelar
+                    </button>
+                    <button type="submit" className="flex-2 bg-blue-600 text-white rounded-xl py-3 text-sm font-bold shadow-lg shadow-blue-100 hover:bg-blue-700 active:scale-95 transition-all">
                       Salvar Alterações
                     </button>
                   </div>
