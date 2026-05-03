@@ -415,12 +415,12 @@ export default function App() {
     const cMonthEarnings = mTripsTotal.filter(t => t.category === 'empresa').reduce((acc, t) => acc + t.earnings, 0);
 
     const mFuelTotal = mTripsTotal.filter(t => t.category === 'entrega').reduce((acc, t) => acc + t.fuelCost, 0);
-    const mDeliveryDebts = debts.filter(d => d.dueDate.startsWith(curMonth) && d.category === 'entrega').reduce((acc, d) => acc + d.value, 0);
-    const mCompanyDebts = debts.filter(d => d.dueDate.startsWith(curMonth) && d.category === 'empresa').reduce((acc, d) => acc + d.value, 0);
-    const mSalariesTotal = salaries.filter(s => s.month === curMonth).reduce((acc, s) => acc + s.totalValue, 0);
+    const mPaidDeliveryDebts = debts.filter(d => d.dueDate.startsWith(curMonth) && d.category === 'entrega' && d.isPaid).reduce((acc, d) => acc + d.value, 0);
+    const mPaidCompanyDebts = debts.filter(d => d.dueDate.startsWith(curMonth) && d.category === 'empresa' && d.isPaid).reduce((acc, d) => acc + d.value, 0);
+    const mSalariesPaidTotal = salaries.filter(s => s.month === curMonth).reduce((acc, s) => acc + s.paidValue, 0);
 
-    const monthDeliveryProfit = dMonthEarnings - mFuelTotal - mDeliveryDebts;
-    const monthCompanyProfit = cMonthEarnings - mSalariesTotal - mCompanyDebts;
+    const monthDeliveryProfit = dMonthEarnings - mFuelTotal - mPaidDeliveryDebts;
+    const monthCompanyProfit = cMonthEarnings - mSalariesPaidTotal - mPaidCompanyDebts;
 
     // Grouping by Month for History
     const monthlySummary = trips.reduce((acc: any, trip) => {
@@ -463,11 +463,9 @@ export default function App() {
       const mClearedGross = mTrips.filter(t => isTripCleared(t)).reduce((acc, t) => acc + t.earnings, 0) + mReceivables;
       const mFuel = mTrips.reduce((acc, t) => acc + t.fuelCost, 0);
       const mPaidDebts = debts.filter(d => d.dueDate.startsWith(m) && d.category === cat && d.isPaid).reduce((acc, d) => acc + d.value, 0);
-      const mSalaryData = salaries.filter(s => s.month === m).reduce((acc, s) => acc + s.paidValue, 0);
+      const mSalaryData = cat === 'empresa' ? salaries.filter(s => s.month === m).reduce((acc, s) => acc + s.paidValue, 0) : 0;
 
-      return cat === 'entrega' 
-        ? mClearedGross - mFuel - mPaidDebts
-        : mClearedGross - mSalaryData;
+      return mClearedGross - mFuel - mPaidDebts - mSalaryData;
     };
 
     // Calculate carry-over balance from previous months
@@ -494,17 +492,15 @@ export default function App() {
     
     const monthFuelCostCat = monthTripsCat.reduce((acc, t) => acc + t.fuelCost, 0);
     
-    const monthSalariesPaid = salaries
-      .filter(s => s.month === selectedFinanceMonth)
-      .reduce((acc, s) => acc + s.paidValue, 0);
+    const monthSalariesPaid = financeCategory === 'empresa' 
+      ? salaries.filter(s => s.month === selectedFinanceMonth).reduce((acc, s) => acc + s.paidValue, 0)
+      : 0;
 
-    const monthBalanceCat = financeCategory === 'entrega' 
-      ? monthClearedGrossEarningsCat - monthFuelCostCat - monthPaidDebtsCat
-      : monthClearedGrossEarningsCat - monthSalariesPaid;
+    const monthBalanceCat = monthClearedGrossEarningsCat - monthFuelCostCat - monthPaidDebtsCat - monthSalariesPaid;
 
     const totalBalanceCat = carryOverBalance + monthBalanceCat;
 
-    const monthNetProfitCat = monthTotalGrossEarningsCat - monthFuelCostCat - monthTotalDebtsCat;
+    const monthNetProfitCat = monthTotalGrossEarningsCat - monthFuelCostCat - monthPaidDebtsCat - monthSalariesPaid;
 
     // Global stats (used in dash)
     const totalPendingDebts = debts.filter(d => !d.isPaid).reduce((acc, d) => acc + d.value, 0);
@@ -523,6 +519,30 @@ export default function App() {
       };
     });
 
+    const monthlyProfitList = fMonths.map(m => {
+      const deliveryPaidDebts = debts.filter(d => d.dueDate.startsWith(m) && d.category === 'entrega' && d.isPaid).reduce((acc, d) => acc + d.value, 0);
+      const companyPaidDebts = debts.filter(d => d.dueDate.startsWith(m) && d.category === 'empresa' && d.isPaid).reduce((acc, d) => acc + d.value, 0);
+      
+      const calculateOperational = (month: string, cat: 'entrega' | 'empresa') => {
+        const mTrips = trips.filter(t => t.date.startsWith(month) && t.category === cat);
+        const mReceivables = cat === 'entrega' ? receivables.filter(r => r.date.startsWith(month)).reduce((acc, r) => acc + r.totalValue, 0) : 0;
+        const mClearedGross = mTrips.filter(t => isTripCleared(t)).reduce((acc, t) => acc + t.earnings, 0) + mReceivables;
+        const mFuel = mTrips.reduce((acc, t) => acc + t.fuelCost, 0);
+        const mSalaryData = cat === 'empresa' ? salaries.filter(s => s.month === month).reduce((acc, s) => acc + s.paidValue, 0) : 0;
+        return mClearedGross - mFuel - mSalaryData;
+      };
+
+      return {
+        month: m,
+        deliveryProfit: calculateMonthBalance(m, 'entrega'),
+        companyProfit: calculateMonthBalance(m, 'empresa'),
+        deliveryOperational: calculateOperational(m, 'entrega'),
+        companyOperational: calculateOperational(m, 'empresa'),
+        deliveryPaidDebts,
+        companyPaidDebts
+      };
+    }).sort((a, b) => b.month.localeCompare(a.month));
+
     return { 
       todayEarnings, 
       todayKM, 
@@ -535,6 +555,7 @@ export default function App() {
       efficiency, 
       chartData: last7Days,
       monthlySummaryList,
+      monthlyProfitList,
       totalPendingDebts,
       monthDeliveryProfit,
       monthCompanyProfit,
@@ -1365,7 +1386,7 @@ export default function App() {
                     </div>
                     <div className="text-right">
                       <p className="text-[9px] uppercase font-bold opacity-40">Despesas (Mês)</p>
-                      <p className="text-xs font-bold text-red-300">-{new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(financeCategory === 'entrega' ? (stats.monthPaidDebts + stats.monthFuelCost) : stats.monthSalariesPaid)}</p>
+                      <p className="text-xs font-bold text-red-300">-{new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(stats.monthPaidDebts + stats.monthFuelCost + stats.monthSalariesPaid)}</p>
                     </div>
                   </div>
                 </div>
@@ -2597,6 +2618,64 @@ export default function App() {
                         Salvar Metas
                       </button>
                     </form>
+
+                    <div className="pt-6 border-t border-gray-100">
+                      <h3 className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em] mb-4">Histórico Financeiro (Mensal)</h3>
+                      <div className="space-y-2">
+                        {stats.monthlyProfitList.map((item) => (
+                          <div key={item.month} className="bg-gray-50 rounded-2xl p-4 border border-gray-100">
+                            <div className="flex justify-between items-center mb-3">
+                              <span className="text-xs font-black text-gray-900 capitalize">
+                                {new Date(item.month + '-01T12:00:00').toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })}
+                              </span>
+                              <div className="h-px flex-1 bg-gray-200 mx-4" />
+                            </div>
+                            <div className="grid grid-cols-2 gap-4">
+                              <div className="space-y-1">
+                                <div className="flex items-center gap-1.5 opacity-60">
+                                  <Bike size={10} className="text-orange-500" />
+                                  <span className="text-[8px] font-bold text-gray-500 uppercase">Resumo Entrega</span>
+                                </div>
+                                <div className="space-y-0.5">
+                                  <div className="flex justify-between items-center text-[10px]">
+                                    <span className="text-gray-400">Ganhos:</span>
+                                    <span className={cn("font-bold text-orange-600")}>
+                                      {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(item.deliveryOperational)}
+                                    </span>
+                                  </div>
+                                  <div className="flex justify-between items-center text-[10px]">
+                                    <span className="text-gray-400">Dívidas:</span>
+                                    <span className="font-bold text-red-500">
+                                      -{new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(item.deliveryPaidDebts)}
+                                    </span>
+                                  </div>
+                                </div>
+                              </div>
+                              <div className="space-y-1 text-right">
+                                <div className="flex items-center gap-1.5 justify-end opacity-60">
+                                  <span className="text-[8px] font-bold text-gray-500 uppercase">Resumo Empresa</span>
+                                  <Briefcase size={10} className="text-blue-500" />
+                                </div>
+                                <div className="space-y-0.5">
+                                  <div className="flex justify-between items-center text-[10px]">
+                                    <span className={cn("font-bold text-blue-600")}>
+                                      {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(item.companyOperational)}
+                                    </span>
+                                    <span className="text-gray-400">:Ganhos</span>
+                                  </div>
+                                  <div className="flex justify-between items-center text-[10px]">
+                                    <span className="font-bold text-red-500">
+                                      -{new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(item.companyPaidDebts)}
+                                    </span>
+                                    <span className="text-gray-400">:Dívidas</span>
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
                   </div>
                 )}
 
