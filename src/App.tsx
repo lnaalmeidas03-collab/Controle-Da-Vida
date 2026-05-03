@@ -520,26 +520,28 @@ export default function App() {
     });
 
     const monthlyProfitList = fMonths.map(m => {
+      const deliveryTrips = trips.filter(t => t.date.startsWith(m) && t.category === 'entrega');
+      const companyTrips = trips.filter(t => t.date.startsWith(m) && t.category === 'empresa');
+      
       const deliveryPaidDebts = debts.filter(d => d.dueDate.startsWith(m) && d.category === 'entrega' && d.isPaid).reduce((acc, d) => acc + d.value, 0);
       const companyPaidDebts = debts.filter(d => d.dueDate.startsWith(m) && d.category === 'empresa' && d.isPaid).reduce((acc, d) => acc + d.value, 0);
       
-      const calculateOperational = (month: string, cat: 'entrega' | 'empresa') => {
-        const mTrips = trips.filter(t => t.date.startsWith(month) && t.category === cat);
-        const mReceivables = cat === 'entrega' ? receivables.filter(r => r.date.startsWith(month)).reduce((acc, r) => acc + r.totalValue, 0) : 0;
-        const mClearedGross = mTrips.filter(t => isTripCleared(t)).reduce((acc, t) => acc + t.earnings, 0) + mReceivables;
-        const mFuel = mTrips.reduce((acc, t) => acc + t.fuelCost, 0);
-        const mSalaryData = cat === 'empresa' ? salaries.filter(s => s.month === month).reduce((acc, s) => acc + s.paidValue, 0) : 0;
-        return mClearedGross - mFuel - mSalaryData;
-      };
+      const deliveryFuel = deliveryTrips.reduce((acc, t) => acc + t.fuelCost, 0);
+      const companySalaries = salaries.filter(s => s.month === m).reduce((acc, s) => acc + s.paidValue, 0);
+      
+      const deliveryPayments = receivablePayments.filter(p => p.date.startsWith(m)).reduce((acc, p) => acc + p.value, 0);
+      
+      const deliveryGross = deliveryTrips.reduce((acc, t) => acc + t.earnings, 0) + deliveryPayments;
+      const companyGross = companyTrips.reduce((acc, t) => acc + t.earnings, 0);
 
       return {
         month: m,
         deliveryProfit: calculateMonthBalance(m, 'entrega'),
         companyProfit: calculateMonthBalance(m, 'empresa'),
-        deliveryOperational: calculateOperational(m, 'entrega'),
-        companyOperational: calculateOperational(m, 'empresa'),
-        deliveryPaidDebts,
-        companyPaidDebts
+        deliveryOperational: deliveryGross,
+        companyOperational: companyGross,
+        deliveryPaidDebts: deliveryPaidDebts + deliveryFuel,
+        companyPaidDebts: companyPaidDebts + companySalaries
       };
     }).sort((a, b) => b.month.localeCompare(a.month));
 
