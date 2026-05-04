@@ -94,6 +94,9 @@ interface Trip {
 
 interface Debt {
   id: string;
+  groupId?: string; // To group installments
+  parcel?: number; // Current parcel number
+  totalParcels?: number; // Total number of parcels
   title: string;
   value: number;
   dueDate: string;
@@ -181,6 +184,7 @@ export default function App() {
   const [isManagingPlatforms, setIsManagingPlatforms] = useState(false);
   const [isManagingGoals, setIsManagingGoals] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [historyFilterMonth, setHistoryFilterMonth] = useState('all');
   const [showSaveFeedback, setShowSaveFeedback] = useState(false);
   const [editingTrip, setEditingTrip] = useState<Trip | null>(null);
   const [editingDebt, setEditingDebt] = useState<Debt | null>(null);
@@ -520,28 +524,31 @@ export default function App() {
     });
 
     const monthlyProfitList = fMonths.map(m => {
-      const deliveryTrips = trips.filter(t => t.date.startsWith(m) && t.category === 'entrega');
-      const companyTrips = trips.filter(t => t.date.startsWith(m) && t.category === 'empresa');
+      const deliveryTrips = trips.filter(t => t.date.slice(0, 7) === m && t.category === 'entrega');
+      const companyTrips = trips.filter(t => t.date.slice(0, 7) === m && t.category === 'empresa');
       
-      const deliveryPaidDebts = debts.filter(d => d.dueDate.startsWith(m) && d.category === 'entrega' && d.isPaid).reduce((acc, d) => acc + d.value, 0);
-      const companyPaidDebts = debts.filter(d => d.dueDate.startsWith(m) && d.category === 'empresa' && d.isPaid).reduce((acc, d) => acc + d.value, 0);
+      const deliveryPaidDebts = debts.filter(d => d.dueDate.slice(0, 7) === m && d.category === 'entrega' && d.isPaid).reduce((acc, d) => acc + d.value, 0);
+      const companyPaidDebts = debts.filter(d => d.dueDate.slice(0, 7) === m && d.category === 'empresa' && d.isPaid).reduce((acc, d) => acc + d.value, 0);
       
       const deliveryFuel = deliveryTrips.reduce((acc, t) => acc + t.fuelCost, 0);
       const companySalaries = salaries.filter(s => s.month === m).reduce((acc, s) => acc + s.paidValue, 0);
       
-      const deliveryPayments = receivablePayments.filter(p => p.date.startsWith(m)).reduce((acc, p) => acc + p.value, 0);
+      const deliveryPayments = receivablePayments.filter(p => p.date.slice(0, 7) === m).reduce((acc, p) => acc + p.value, 0);
       
       const deliveryGross = deliveryTrips.reduce((acc, t) => acc + t.earnings, 0) + deliveryPayments;
       const companyGross = companyTrips.reduce((acc, t) => acc + t.earnings, 0);
 
+      const deliveryExpenses = deliveryPaidDebts + deliveryFuel;
+      const companyExpenses = companyPaidDebts + companySalaries;
+
       return {
         month: m,
-        deliveryProfit: calculateMonthBalance(m, 'entrega'),
-        companyProfit: calculateMonthBalance(m, 'empresa'),
-        deliveryOperational: deliveryGross,
-        companyOperational: companyGross,
-        deliveryPaidDebts: deliveryPaidDebts + deliveryFuel,
-        companyPaidDebts: companyPaidDebts + companySalaries
+        deliveryGross,
+        deliveryExpenses,
+        deliveryNet: deliveryGross - deliveryExpenses,
+        companyGross,
+        companyExpenses,
+        companyNet: companyGross - companyExpenses
       };
     }).sort((a, b) => b.month.localeCompare(a.month));
 
@@ -628,7 +635,36 @@ export default function App() {
   };
 
   const updateDebt = (updated: Debt) => {
-    setDebts(debts.map(d => d.id === updated.id ? updated : d));
+    if (updated.groupId) {
+      // Group update: title and value
+      // Strip suffix if any (e.g., " (1/3)")
+      let baseTitle = updated.title;
+      if (updated.parcel && updated.totalParcels) {
+        const suffix = ` (${updated.parcel}/${updated.totalParcels})`;
+        if (baseTitle.endsWith(suffix)) {
+          baseTitle = baseTitle.substring(0, baseTitle.length - suffix.length);
+        }
+      } else {
+        baseTitle = updated.title.replace(/ \(\d+\/\d+\)$/, '');
+      }
+
+      setDebts(debts.map(d => {
+        if (d.groupId === updated.groupId) {
+          // If it's the exact same id, use all updated fields (including potential date change for that specific installment)
+          if (d.id === updated.id) return updated;
+          
+          // For other installments in the group, update title and value
+          return {
+            ...d,
+            title: d.parcel && d.totalParcels ? `${baseTitle} (${d.parcel}/${d.totalParcels})` : baseTitle,
+            value: updated.value
+          };
+        }
+        return d;
+      }));
+    } else {
+      setDebts(debts.map(d => d.id === updated.id ? updated : d));
+    }
     setEditingDebt(null);
   };
 
@@ -651,6 +687,7 @@ export default function App() {
     const newDebts: Debt[] = [];
     const baseDate = new Date(dueDate + 'T12:00:00');
     const targetDay = baseDate.getDate();
+    const groupId = crypto.randomUUID();
 
     for (let i = 0; i < parcels; i++) {
       const currentParcelDate = new Date(baseDate);
@@ -665,6 +702,9 @@ export default function App() {
       
       newDebts.push({
         id: crypto.randomUUID(),
+        groupId: parcels > 1 ? groupId : undefined,
+        parcel: i + 1,
+        totalParcels: parcels,
         title: parcels > 1 ? `${title} (${i+1}/${parcels})` : title,
         value,
         dueDate: formattedDate,
@@ -2622,14 +2662,41 @@ export default function App() {
                     </form>
 
                     <div className="pt-6 border-t border-gray-100">
-                      <h3 className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em] mb-4">Histórico Financeiro (Mensal)</h3>
+                      <div className="flex justify-between items-center mb-4">
+                        <h3 className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em]">Histórico Financeiro (Mensal)</h3>
+                        <select 
+                          value={historyFilterMonth}
+                          onChange={(e) => setHistoryFilterMonth(e.target.value)}
+                          className="bg-gray-50 border border-gray-200 rounded-lg px-2 py-1 text-[10px] font-bold text-gray-500 focus:outline-none"
+                        >
+                          <option value="all">Todos os Meses</option>
+                          {[...stats.financeMonths].sort((a, b) => b.localeCompare(a)).map(m => (
+                            <option key={m} value={m}>
+                              {new Date(m + '-01T12:00:00').toLocaleDateString('pt-BR', { month: 'short', year: '2-digit' }).toUpperCase()}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      
                       <div className="space-y-2">
-                        {stats.monthlyProfitList.map((item) => (
-                          <div key={item.month} className="bg-gray-50 rounded-2xl p-4 border border-gray-100">
+                        {stats.monthlyProfitList
+                          .filter(item => historyFilterMonth === 'all' || item.month === historyFilterMonth)
+                          .map((item) => (
+                          <div key={item.month} className={cn(
+                            "rounded-2xl p-4 border transition-all",
+                            item.month === getLocalMonth() 
+                              ? "bg-blue-50/50 border-blue-100 shadow-sm" 
+                              : "bg-gray-50 border-gray-100"
+                          )}>
                             <div className="flex justify-between items-center mb-3">
-                              <span className="text-xs font-black text-gray-900 capitalize">
-                                {new Date(item.month + '-01T12:00:00').toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })}
-                              </span>
+                              <div className="flex items-center gap-2">
+                                <span className="text-xs font-black text-gray-900 capitalize">
+                                  {new Date(item.month + '-01T12:00:00').toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })}
+                                </span>
+                                {item.month === getLocalMonth() && (
+                                  <span className="bg-blue-600 text-white text-[7px] font-black px-1.5 py-0.5 rounded uppercase tracking-tighter">Atual</span>
+                                )}
+                              </div>
                               <div className="h-px flex-1 bg-gray-200 mx-4" />
                             </div>
                             <div className="grid grid-cols-2 gap-4">
@@ -2641,14 +2708,20 @@ export default function App() {
                                 <div className="space-y-0.5">
                                   <div className="flex justify-between items-center text-[10px]">
                                     <span className="text-gray-400">Ganhos:</span>
-                                    <span className={cn("font-bold text-orange-600")}>
-                                      {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(item.deliveryOperational)}
+                                    <span className="font-bold text-orange-600">
+                                      {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(item.deliveryGross)}
                                     </span>
                                   </div>
                                   <div className="flex justify-between items-center text-[10px]">
-                                    <span className="text-gray-400">Dívidas:</span>
+                                    <span className="text-gray-400">Dívidas/Custos:</span>
                                     <span className="font-bold text-red-500">
-                                      -{new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(item.deliveryPaidDebts)}
+                                      -{new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(item.deliveryExpenses)}
+                                    </span>
+                                  </div>
+                                  <div className="flex justify-between items-center text-[10px] pt-1 border-t border-gray-200/50 mt-1">
+                                    <span className="text-gray-600 font-bold">LUCRO:</span>
+                                    <span className={cn("font-black", item.deliveryNet >= 0 ? "text-orange-600" : "text-red-600")}>
+                                      {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(item.deliveryNet)}
                                     </span>
                                   </div>
                                 </div>
@@ -2660,16 +2733,22 @@ export default function App() {
                                 </div>
                                 <div className="space-y-0.5">
                                   <div className="flex justify-between items-center text-[10px]">
-                                    <span className={cn("font-bold text-blue-600")}>
-                                      {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(item.companyOperational)}
+                                    <span className="font-bold text-blue-600">
+                                      {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(item.companyGross)}
                                     </span>
                                     <span className="text-gray-400">:Ganhos</span>
                                   </div>
                                   <div className="flex justify-between items-center text-[10px]">
                                     <span className="font-bold text-red-500">
-                                      -{new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(item.companyPaidDebts)}
+                                      -{new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(item.companyExpenses)}
                                     </span>
-                                    <span className="text-gray-400">:Dívidas</span>
+                                    <span className="text-gray-400">:Dívidas/Custos</span>
+                                  </div>
+                                  <div className="flex justify-between items-center text-[10px] pt-1 border-t border-gray-200/50 mt-1">
+                                    <span className={cn("font-black", item.companyNet >= 0 ? "text-blue-600" : "text-red-600")}>
+                                      {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(item.companyNet)}
+                                    </span>
+                                    <span className="text-gray-600 font-bold">:LUCRO</span>
                                   </div>
                                 </div>
                               </div>
