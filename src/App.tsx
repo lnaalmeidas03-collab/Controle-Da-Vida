@@ -90,6 +90,7 @@ interface Trip {
   platform: string;
   category: 'entrega' | 'empresa';
   isExtra?: boolean;
+  isPaid?: boolean;
 }
 
 interface Debt {
@@ -352,21 +353,9 @@ export default function App() {
   const stats = useMemo(() => {
     const today = getLocalDate();
 
-    // Helper to get next Wednesday for a given date
-    const getNextWednesday = (dateStr: string) => {
-      const date = new Date(dateStr + 'T12:00:00');
-      const day = date.getDay(); // 0 (Sun) to 6 (Sat)
-      const daysUntilWednesday = (3 - day + 7) % 7;
-      const nextWednesday = new Date(date);
-      nextWednesday.setDate(date.getDate() + daysUntilWednesday);
-      return formatDate(nextWednesday);
-    };
-
     // Helper to check if a trip's earnings are cleared (added to balance)
     const isTripCleared = (trip: Trip) => {
-      if (trip.isExtra) return true;
-      const clearedDate = getNextWednesday(trip.date);
-      return today >= clearedDate;
+      return trip.isExtra || trip.isPaid === true;
     };
     
     // Helper to get receivable payments by date
@@ -632,6 +621,10 @@ export default function App() {
   const updateTrip = (updated: Trip) => {
     setTrips(trips.map(t => t.id === updated.id ? updated : t));
     setEditingTrip(null);
+  };
+
+  const toggleTripPaid = (id: string) => {
+    setTrips(trips.map(t => t.id === id ? { ...t, isPaid: !t.isPaid } : t));
   };
 
   const updateDebt = (updated: Debt) => {
@@ -1265,7 +1258,7 @@ export default function App() {
                 <div className="flex items-center justify-between mb-2">
                   <h2 className="text-sm font-bold text-gray-800 uppercase tracking-tight">Histórico de Atividades</h2>
                   <div className="text-[9px] bg-blue-50 text-blue-600 px-2 py-1 rounded-md font-bold border border-blue-100">
-                    {trips.length} REGISTROS
+                    {trips.filter(t => !t.isExtra).length} REGISTROS
                   </div>
                 </div>
 
@@ -1282,13 +1275,13 @@ export default function App() {
                 </div>
 
                 <div className="space-y-3">
-                  {trips.length === 0 ? (
+                  {trips.filter(t => !t.isExtra).length === 0 ? (
                     <div className="text-center py-20 bg-gray-50 rounded-2xl border border-dashed border-gray-200 text-xs text-gray-400 font-medium italic">
                       Nenhum registro encontrado.
                     </div>
                   ) : (
                     [...trips]
-                      .filter(t => t.platform.toLowerCase().includes(searchTerm.toLowerCase()))
+                      .filter(t => !t.isExtra && t.platform.toLowerCase().includes(searchTerm.toLowerCase()))
                       .reverse()
                       .map((trip) => (
                       <div key={trip.id} className="group">
@@ -1299,8 +1292,19 @@ export default function App() {
                               <span className="text-[8px] font-bold text-gray-500 group-hover:text-blue-600">{trip.date.split('-').slice(2)}/{trip.date.split('-').slice(1,2)}</span>
                             </div>
                             <div>
-                              <div className="font-bold text-gray-900">
+                              <div className="font-bold text-gray-900 flex items-center gap-2">
                                  {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(trip.earnings)}
+                                 <button 
+                                   onClick={() => toggleTripPaid(trip.id)}
+                                   className={cn(
+                                     "text-[7px] font-black uppercase px-1.5 py-0.5 rounded transition-all",
+                                     trip.isPaid 
+                                       ? "bg-emerald-100 text-emerald-700" 
+                                       : "bg-gray-100 text-gray-500"
+                                   )}
+                                 >
+                                   {trip.isPaid ? 'PAGO' : 'PENDENTE'}
+                                 </button>
                               </div>
                               <div className="text-[9px] text-gray-400 font-bold uppercase tracking-tighter">
                                 {trip.platform} • {(trip.kmEnd - trip.kmStart).toFixed(1)} km
@@ -1390,8 +1394,8 @@ export default function App() {
                       Saldo Acumulado • {new Date(selectedFinanceMonth + '-01T00:00:00').toLocaleDateString('pt-BR', { month: 'short' })}
                     </p>
                     <div className="text-right">
-                      <p className="text-[8px] uppercase font-bold opacity-40">Ciclo de Pagamento</p>
-                      <p className="text-[9px] font-bold text-blue-400">Quarta-feira</p>
+                      <p className="text-[8px] uppercase font-bold opacity-40">Status de Pagamento</p>
+                      <p className="text-[9px] font-bold text-emerald-400">Manual</p>
                     </div>
                   </div>
 
@@ -1493,6 +1497,20 @@ export default function App() {
                             <p className="text-xs font-black text-emerald-600">
                               {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(t.earnings)}
                             </p>
+                            {!t.isExtra && (
+                              <button 
+                                onClick={() => toggleTripPaid(t.id)}
+                                className={cn(
+                                  "text-[7px] font-black uppercase px-1.5 py-0.5 rounded transition-all",
+                                  t.isPaid 
+                                    ? "bg-emerald-100 text-emerald-700" 
+                                    : "bg-gray-100 text-gray-500 hover:bg-emerald-50 hover:text-emerald-600"
+                                )}
+                                title={t.isPaid ? 'Pago' : 'Pendente'}
+                              >
+                                {t.isPaid ? 'PAGO' : 'PAGAR'}
+                              </button>
+                            )}
                             <button onClick={() => setEditingTrip(t)} className="text-gray-200 hover:text-blue-500 transition-colors p-1">
                               <Edit2 size={12} />
                             </button>
