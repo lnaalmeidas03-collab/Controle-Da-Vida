@@ -79,6 +79,22 @@ const formatDate = (date: Date) => {
   return `${year}-${month}-${day}`;
 };
 
+// Helper to get Monday and Sunday of a date's week
+const getWeekRange = (dateStr: string) => {
+  const date = new Date(dateStr + 'T12:00:00');
+  const day = date.getDay(); // 0 is Sun, 1 is Mon...
+  const diffToMon = day === 0 ? -6 : 1 - day;
+  const monday = new Date(date);
+  monday.setDate(date.getDate() + diffToMon);
+  const sunday = new Date(monday);
+  sunday.setDate(monday.getDate() + 6);
+  return { 
+    monday: formatDate(monday), 
+    sunday: formatDate(sunday), 
+    key: formatDate(monday) 
+  };
+};
+
 // Interfaces
 interface Trip {
   id: string;
@@ -185,6 +201,7 @@ export default function App() {
   const [isManagingPlatforms, setIsManagingPlatforms] = useState(false);
   const [isManagingGoals, setIsManagingGoals] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [financeView, setFinanceView] = useState<'daily' | 'weekly'>('daily');
   const [historyFilterMonth, setHistoryFilterMonth] = useState('all');
   const [showSaveFeedback, setShowSaveFeedback] = useState(false);
   const [editingTrip, setEditingTrip] = useState<Trip | null>(null);
@@ -625,6 +642,16 @@ export default function App() {
 
   const toggleTripPaid = (id: string) => {
     setTrips(trips.map(t => t.id === id ? { ...t, isPaid: !t.isPaid } : t));
+  };
+
+  const payWeek = (mondayKey: string) => {
+    setTrips(trips.map(t => {
+      const range = getWeekRange(t.date);
+      if (range.key === mondayKey && t.category === 'entrega' && !t.isPaid) {
+        return { ...t, isPaid: true };
+      }
+      return t;
+    }));
   };
 
   const updateDebt = (updated: Debt) => {
@@ -1262,24 +1289,48 @@ export default function App() {
                   </div>
                 </div>
 
-                {/* Search Bar */}
-                <div className="relative group">
-                  <Search size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 transition-colors group-focus-within:text-blue-500" />
-                  <input 
-                    type="text" 
-                    placeholder="Pesquisar por plataforma..."
-                    value={searchTerm}
-                    onChange={e => setSearchTerm(e.target.value)}
-                    className="w-full bg-gray-50 border border-gray-200 rounded-xl pl-11 pr-4 py-3 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all shadow-sm"
-                  />
+                {/* View Toggle */}
+                <div className="flex gap-2 mb-4">
+                  <button 
+                    onClick={() => setFinanceView('daily')}
+                    className={cn(
+                      "flex-1 py-3 rounded-xl text-[10px] font-bold uppercase transition-all border",
+                      financeView === 'daily' ? "bg-blue-50 border-blue-200 text-blue-600 shadow-sm" : "bg-white border-gray-100 text-gray-400"
+                    )}
+                  >
+                    Resumo Diário
+                  </button>
+                  <button 
+                    onClick={() => setFinanceView('weekly')}
+                    className={cn(
+                      "flex-1 py-3 rounded-xl text-[10px] font-bold uppercase transition-all border",
+                      financeView === 'weekly' ? "bg-blue-50 border-blue-200 text-blue-600 shadow-sm" : "bg-white border-gray-100 text-gray-400"
+                    )}
+                  >
+                    Resumo Semanal
+                  </button>
                 </div>
+
+                {/* Search Bar */}
+                {financeView === 'daily' && (
+                  <div className="relative group mb-4">
+                    <Search size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 transition-colors group-focus-within:text-blue-500" />
+                    <input 
+                      type="text" 
+                      placeholder="Pesquisar por plataforma..."
+                      value={searchTerm}
+                      onChange={e => setSearchTerm(e.target.value)}
+                      className="w-full bg-gray-50 border border-gray-200 rounded-xl pl-11 pr-4 py-3 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all shadow-sm"
+                    />
+                  </div>
+                )}
 
                 <div className="space-y-3">
                   {trips.filter(t => !t.isExtra).length === 0 ? (
                     <div className="text-center py-20 bg-gray-50 rounded-2xl border border-dashed border-gray-200 text-xs text-gray-400 font-medium italic">
                       Nenhum registro encontrado.
                     </div>
-                  ) : (
+                  ) : financeView === 'daily' ? (
                     [...trips]
                       .filter(t => !t.isExtra && t.platform.toLowerCase().includes(searchTerm.toLowerCase()))
                       .reverse()
@@ -1328,6 +1379,70 @@ export default function App() {
                         </Card>
                       </div>
                     ))
+                  ) : (
+                    (() => {
+                      const weeklyGroups: Record<string, { start: string, end: string, total: number, trips: Trip[] }> = {};
+                      trips
+                        .filter(t => !t.isExtra)
+                        .forEach(t => {
+                          const range = getWeekRange(t.date);
+                          if (!weeklyGroups[range.key]) {
+                            weeklyGroups[range.key] = { start: range.monday, end: range.sunday, total: 0, trips: [] };
+                          }
+                          weeklyGroups[range.key].total += t.earnings;
+                          weeklyGroups[range.key].trips.push(t);
+                        });
+
+                      return Object.entries(weeklyGroups)
+                        .sort(([k1], [k2]) => k2.localeCompare(k1))
+                        .map(([key, group]) => {
+                          const allPaid = group.trips.length > 0 && group.trips.every(t => t.isPaid);
+
+                          return (
+                            <div key={key} className={cn(
+                              "bg-white border p-4 rounded-2xl shadow-sm transition-all", 
+                              allPaid ? "bg-gray-50 border-gray-100 opacity-60" : "border-gray-100"
+                            )}>
+                              <div className="flex justify-between items-center mb-3">
+                                <div>
+                                  <p className="text-[10px] font-black text-gray-900 uppercase tracking-tighter">
+                                    Semana de {group.start.split('-').reverse().slice(0, 2).join('/')} a {group.end.split('-').reverse().slice(0, 2).join('/')}
+                                  </p>
+                                  <p className="text-[8px] text-gray-400 font-bold uppercase">{group.trips.length} corridas realizadas</p>
+                                </div>
+                                <div className="text-right">
+                                  <p className="text-sm font-black text-blue-600">
+                                    {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(group.total)}
+                                  </p>
+                                </div>
+                              </div>
+                              
+                              <div className="flex items-center justify-between pt-3 border-t border-gray-50">
+                                <div className="flex items-center gap-1">
+                                  {allPaid ? (
+                                    <span className="flex items-center gap-1 text-emerald-600 font-black text-[9px] uppercase">
+                                      <CheckCircle2 size={12} />
+                                      Tudo Recebido
+                                    </span>
+                                  ) : (
+                                    <span className="text-[9px] font-bold text-amber-500 uppercase">Aguardando Pagamento</span>
+                                  )}
+                                </div>
+                                
+                                {!allPaid && (
+                                  <button 
+                                    onClick={() => payWeek(key)}
+                                    className="bg-emerald-600 text-white text-[10px] font-black uppercase px-4 py-2 rounded-full shadow-lg shadow-emerald-100 flex items-center gap-2 active:scale-95 transition-all"
+                                  >
+                                    <Wallet size={12} />
+                                    Receber Semana
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        });
+                    })()
                   )}
                 </div>
               </motion.div>
@@ -1481,45 +1596,122 @@ export default function App() {
                       {showSaveFeedback ? '✓ Salvo com Sucesso!' : 'Salvar Ganho'}
                     </button>
                   </form>
+                  
+                  {/* View Toggle */}
+                  <div className="flex gap-2 mb-4">
+                    <button 
+                      onClick={() => setFinanceView('daily')}
+                      className={cn(
+                        "flex-1 py-2 rounded-xl text-[10px] font-bold uppercase transition-all border",
+                        financeView === 'daily' ? "bg-blue-50 border-blue-200 text-blue-600 shadow-sm" : "bg-white border-gray-100 text-gray-400"
+                      )}
+                    >
+                      Vista Diária
+                    </button>
+                    <button 
+                      onClick={() => setFinanceView('weekly')}
+                      className={cn(
+                        "flex-1 py-2 rounded-xl text-[10px] font-bold uppercase transition-all border",
+                        financeView === 'weekly' ? "bg-blue-50 border-blue-200 text-blue-600 shadow-sm" : "bg-white border-gray-100 text-gray-400"
+                      )}
+                    >
+                      Vista Semanal
+                    </button>
+                  </div>
 
                   {/* List of gains for the current month/category */}
-                  <div className="space-y-2 max-h-48 overflow-y-auto scrollbar-hide pr-1">
-                    {trips
-                      .filter(t => t.category === financeCategory && t.date.startsWith(selectedFinanceMonth))
-                      .sort((a, b) => b.date.localeCompare(a.date))
-                      .map(t => (
-                        <div key={t.id} className="bg-white border border-gray-50 p-3 rounded-xl flex justify-between items-center shadow-sm">
-                          <div>
-                            <p className="text-[10px] font-bold text-gray-800">{t.platform}</p>
-                            <p className="text-[8px] text-gray-400 font-bold uppercase">{t.date.split('-').reverse().join('/')}</p>
-                          </div>
-                          <div className="flex items-center gap-1">
-                            <p className="text-xs font-black text-emerald-600">
-                              {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(t.earnings)}
-                            </p>
-                            {!t.isExtra && (
-                              <button 
-                                onClick={() => toggleTripPaid(t.id)}
-                                className={cn(
-                                  "text-[7px] font-black uppercase px-1.5 py-0.5 rounded transition-all",
-                                  t.isPaid 
-                                    ? "bg-emerald-100 text-emerald-700" 
-                                    : "bg-gray-100 text-gray-500 hover:bg-emerald-50 hover:text-emerald-600"
-                                )}
-                                title={t.isPaid ? 'Pago' : 'Pendente'}
-                              >
-                                {t.isPaid ? 'PAGO' : 'PAGAR'}
+                  <div className="space-y-2 max-h-80 overflow-y-auto scrollbar-hide pr-1">
+                    {financeView === 'daily' ? (
+                      trips
+                        .filter(t => t.category === financeCategory && t.date.startsWith(selectedFinanceMonth))
+                        .sort((a, b) => b.date.localeCompare(a.date))
+                        .map(t => (
+                          <div key={t.id} className="bg-white border border-gray-50 p-3 rounded-xl flex justify-between items-center shadow-sm">
+                            <div>
+                              <p className="text-[10px] font-bold text-gray-800">{t.platform}</p>
+                              <p className="text-[8px] text-gray-400 font-bold uppercase">{t.date.split('-').reverse().join('/')}</p>
+                            </div>
+                            <div className="flex items-center gap-1">
+                              <p className="text-xs font-black text-emerald-600">
+                                {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(t.earnings)}
+                              </p>
+                              {!t.isExtra && (
+                                <button 
+                                  onClick={() => toggleTripPaid(t.id)}
+                                  className={cn(
+                                    "text-[7px] font-black uppercase px-1.5 py-0.5 rounded transition-all",
+                                    t.isPaid 
+                                      ? "bg-emerald-100 text-emerald-700" 
+                                      : "bg-gray-100 text-gray-500 hover:bg-emerald-50 hover:text-emerald-600"
+                                  )}
+                                  title={t.isPaid ? 'Pago' : 'Pendente'}
+                                >
+                                  {t.isPaid ? 'PAGO' : 'PAGAR'}
+                                </button>
+                              )}
+                              <button onClick={() => setEditingTrip(t)} className="text-gray-200 hover:text-blue-500 transition-colors p-1">
+                                <Edit2 size={12} />
                               </button>
-                            )}
-                            <button onClick={() => setEditingTrip(t)} className="text-gray-200 hover:text-blue-500 transition-colors p-1">
-                              <Edit2 size={12} />
-                            </button>
-                            <button onClick={() => deleteTrip(t.id)} className="text-gray-200 hover:text-red-500 transition-colors p-1">
-                              <Trash2 size={12} />
-                            </button>
+                              <button onClick={() => deleteTrip(t.id)} className="text-gray-200 hover:text-red-500 transition-colors p-1">
+                                <Trash2 size={12} />
+                              </button>
+                            </div>
                           </div>
-                        </div>
-                      ))}
+                        ))
+                    ) : (
+                      (() => {
+                        const weeklyGroups: Record<string, { start: string, end: string, total: number, trips: Trip[] }> = {};
+                        trips
+                          .filter(t => t.category === financeCategory && t.date.startsWith(selectedFinanceMonth))
+                          .forEach(t => {
+                            const range = getWeekRange(t.date);
+                            if (!weeklyGroups[range.key]) {
+                              weeklyGroups[range.key] = { start: range.monday, end: range.sunday, total: 0, trips: [] };
+                            }
+                            weeklyGroups[range.key].total += t.earnings;
+                            weeklyGroups[range.key].trips.push(t);
+                          });
+                        
+                        return Object.entries(weeklyGroups)
+                          .sort(([k1], [k2]) => k2.localeCompare(k1))
+                          .map(([key, group]) => {
+                            const allPaid = group.trips.length > 0 && group.trips.every(t => t.isPaid);
+
+                            return (
+                              <div key={key} className={cn("bg-white border p-3 rounded-2xl shadow-sm transition-all", allPaid ? "bg-gray-50 border-gray-100 opacity-60" : "border-blue-50")}>
+                                <div className="flex justify-between items-center mb-1">
+                                  <p className="text-[10px] font-black text-gray-800 uppercase tracking-tighter">
+                                    Semana: {group.start.split('-').reverse().slice(0, 2).join('/')} a {group.end.split('-').reverse().slice(0, 2).join('/')}
+                                  </p>
+                                  <p className="text-xs font-black text-blue-600">
+                                    {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(group.total)}
+                                  </p>
+                                </div>
+                                <div className="flex justify-between items-center">
+                                  <p className="text-[8px] text-gray-400 font-bold uppercase">{group.trips.length} registros</p>
+                                  <div className="flex gap-2">
+                                    {!allPaid && (
+                                      <button 
+                                        onClick={() => payWeek(key)}
+                                        className="bg-emerald-600 text-white text-[8px] font-black uppercase px-3 py-1 rounded-full shadow-lg shadow-emerald-100 flex items-center gap-1 active:scale-95 transition-all text-center"
+                                      >
+                                        <Wallet size={10} />
+                                        Receber Semana
+                                      </button>
+                                    )}
+                                    {allPaid && (
+                                      <div className="flex items-center gap-1 text-emerald-600 font-black text-[8px] uppercase">
+                                        <CheckCircle2 size={10} />
+                                        Recebido
+                                      </div>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          });
+                      })()
+                    )}
                     {trips.filter(t => t.category === financeCategory && t.date.startsWith(selectedFinanceMonth)).length === 0 && (
                       <p className="text-[10px] text-gray-400 font-medium italic text-center py-4 bg-gray-50 rounded-xl border border-dashed border-gray-100">Nenhum ganho registrado neste mês.</p>
                     )}
